@@ -95,12 +95,29 @@ function messageData(notice) {
   }
 }
 
+async function migrateLegacySubscriptions() {
+  while (true) {
+    const { data } = await db.collection('subscriptions')
+      .where({ status: _.exists(false) })
+      .limit(100)
+      .get()
+    if (!data.length) break
+    await Promise.all(data.map(item => db.collection('subscriptions').doc(item._id).update({
+      data: { status: 'subscribed' }
+    })))
+    if (data.length < 100) break
+  }
+}
+
 async function notifySubscribers(notice) {
+  await migrateLegacySubscriptions()
   let sent = 0
   let failed = 0
   let lastId = ''
   while (true) {
-    const condition = lastId ? { active: true, _id: _.gt(lastId) } : { active: true }
+    const condition = lastId
+      ? { active: true, status: 'subscribed', _id: _.gt(lastId) }
+      : { active: true, status: 'subscribed' }
     const query = db.collection('subscriptions').where(condition)
     const { data } = await query.orderBy('_id', 'asc').limit(100).get()
     if (!data.length) break

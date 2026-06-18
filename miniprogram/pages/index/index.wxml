@@ -18,14 +18,14 @@
     </button>
     <button
       wx:if="{{subscribed}}"
-      class="test-btn"
-      loading="{{testing}}"
-      disabled="{{testing}}"
-      bindtap="sendTestNotification"
+      class="cancel-btn"
+      loading="{{cancelling}}"
+      disabled="{{cancelling}}"
+      bindtap="cancelSubscription"
     >
-      测试订阅消息
+      取消订阅
     </button>
-    <view class="hint" wx:if="{{!subscribed}}">每位用户只能订阅一次，授权成功后不可重复订阅。</view>
+    <view class="hint" wx:if="{{!subscribed}}">点击按钮授权订阅；取消订阅后可以重新授权。</view>
     <view class="hint" wx:else>系统仍会每 30 分钟自动检查；手动检查结果也会立即显示在下方。</view>
   </view>
 

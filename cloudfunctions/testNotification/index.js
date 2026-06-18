@@ -16,6 +16,7 @@ exports.main = async () => {
   const result = await db.collection('subscriptions').doc(OPENID).get().catch(() => null)
   const subscriber = result && result.data
   if (!subscriber) return { ok: false, message: '请先订阅提醒' }
+  if (subscriber.status === 'cancelled') return { ok: false, message: '请先重新订阅提醒' }
 
   try {
     await cloud.openapi.subscribeMessage.send({

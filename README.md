@@ -8,7 +8,6 @@
 - `cloudfunctions/subscribe`：保存用户的一次订阅授权
 - `cloudfunctions/getStatus`：读取用户订阅状态和最近检查结果
 - `cloudfunctions/checkNotification`：定时抓取、去重并发送消息
-- `cloudfunctions/testNotification`：向当前用户立即发送一条测试订阅消息
 
 ## 部署
 
@@ -20,8 +19,7 @@
    - `thing3`：温馨提示
 4. 把模板 ID 写入 `miniprogram/config.js`。若平台分配的字段名不同，同步修改 `cloudfunctions/checkNotification/index.js` 的 `messageData`。
 5. 在云开发数据库新建 `subscriptions`、`system_state` 两个集合。权限都设为“仅云函数可读写”；小程序只通过云函数访问。
-6. 在开发者工具中分别右键四个云函数目录，选择“上传并部署：云端安装依赖”。
-   新增云函数后仅重新编译前端不会自动部署；必须单独上传 `testNotification`，并确保目标云环境与 `miniprogram/config.js` 的 `cloudEnvId` 一致。
+6. 在开发者工具中分别右键三个正式云函数目录，选择“上传并部署：云端安装依赖”。
 7. 打开云开发控制台确认 `checkNotification` 的定时触发器已创建。其 cron 为 `0 */30 * * * * *`，即每 30 分钟执行一次。
 8. 首次上线前，在云开发控制台手动运行一次 `checkNotification`，检查日志和 `system_state/score_notice`。
 
@@ -38,9 +36,9 @@
 - 取发布日期最新的一条，并以文章 URL 去重。
 - 页面中的“最新公告”独立取软考网公告列表中发布日期最新的一条，不受成绩通知关键词限制。点击公告会复制原文链接，用户可在系统浏览器中粘贴打开，无需配置业务域名。
 - 微信一次性订阅消息成功发送或发送失败后都会关闭本次消息授权，避免无效授权反复重试；订阅登记本身仍永久保留。
-- 每位用户只能完成一次订阅登记。订阅成功后按钮永久变为“立即检查”，服务端也会拒绝重复订阅。
+- 订阅中的用户不能重复订阅；取消订阅后可以重新授权并恢复订阅。
+- 订阅文档使用 `status` 字段区分 `subscribed`（订阅中）和 `cancelled`（已取消）。取消时保留数据库记录并停止推送；已取消用户会重新看到订阅按钮，授权后可恢复订阅。
 - 手动检查仅允许已订阅用户调用，并设有 1 分钟冷却时间。
-- 测试按钮仅用于开发阶段，不应提交正式版本。每次点击都会单独申请一次订阅授权并立即发送测试消息。
 - 云函数外网访问若受云环境安全规则限制，需要在云开发控制台允许访问 `www.ruankao.org.cn`。
 
 参考：[微信小程序开发文档](https://developers.weixin.qq.com/miniprogram/dev/framework/)

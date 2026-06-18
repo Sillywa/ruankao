@@ -4,7 +4,7 @@ Page({
   data: {
     subscribed: false,
     submitting: false,
-    testing: false,
+    cancelling: false,
     notificationActive: false,
     lastCheckedAt: '',
     latestNotice: null,
@@ -31,41 +31,41 @@ Page({
     }
   },
 
+  async cancelSubscription() {
+    if (this.data.cancelling) return
+    const confirmed = await new Promise(resolve => {
+      wx.showModal({
+        title: '确认取消订阅？',
+        content: '取消后将停止自动成绩提醒，但会保留你的订阅记录。之后可以重新订阅。',
+        confirmText: '确认取消',
+        confirmColor: '#e05b45',
+        success: result => resolve(result.confirm),
+        fail: () => resolve(false)
+      })
+    })
+    if (!confirmed) return
+
+    this.setData({ cancelling: true })
+    try {
+      const { result } = await wx.cloud.callFunction({
+        name: 'subscribe',
+        data: { action: 'cancel' }
+      })
+      if (!result || !result.ok) throw new Error((result && result.message) || '取消失败')
+      this.setData({ subscribed: false, notificationActive: false })
+      wx.showToast({ title: '已取消订阅', icon: 'success' })
+    } catch (error) {
+      console.error('取消订阅失败', error)
+      wx.showToast({ title: error.message || '取消失败', icon: 'none' })
+    } finally {
+      this.setData({ cancelling: false })
+    }
+  },
+
   formatAnnouncement(announcement) {
     if (!announcement) return null
     const dateText = announcement.date || ''
     return { ...announcement, dateText }
-  },
-
-  async sendTestNotification() {
-    if (this.data.testing) return
-    // 必须在用户点击事件的同步调用链中立即调用，否则微信会报 can only be invoked by user TAP gesture。
-    const subscribeRequest = wx.requestSubscribeMessage({ tmplIds: [config.templateId] })
-    this.setData({ testing: true })
-    try {
-      const settings = await subscribeRequest
-      if (settings[config.templateId] !== 'accept') {
-        wx.showToast({ title: '未获得测试授权', icon: 'none' })
-        return
-      }
-      const { result } = await wx.cloud.callFunction({ name: 'testNotification' })
-      if (!result || !result.ok) throw new Error((result && result.message) || '发送失败')
-      wx.showToast({ title: '测试通知已发送', icon: 'success' })
-    } catch (error) {
-      console.error('测试通知发送失败', error)
-      const message = error.errMsg || error.message || ''
-      if (message.includes('FUNCTION_NOT_FOUND') || message.includes('-501000')) {
-        wx.showModal({
-          title: '测试云函数未部署',
-          content: '请在微信开发者工具中右键 cloudfunctions/testNotification，选择“上传并部署：所有文件”，并确认上传到小程序当前使用的云环境。',
-          showCancel: false
-        })
-      } else {
-        wx.showToast({ title: message || '发送失败', icon: 'none' })
-      }
-    } finally {
-      this.setData({ testing: false })
-    }
   },
 
   handlePrimaryAction() {
@@ -103,15 +103,22 @@ Page({
       })
       if (!result || !result.ok) throw new Error((result && result.message) || '检查失败')
       await this.loadStatus()
+      wx.hideLoading()
       wx.showToast({
         title: result.found ? '发现成绩通知' : '暂无最新通知',
-        icon: result.found ? 'success' : 'none'
+        icon: result.found ? 'success' : 'none',
+        duration: 2500
       })
     } catch (error) {
       console.error('立即检查失败', error)
-      wx.showToast({ title: error.message || '检查失败，请稍后重试', icon: 'none' })
-    } finally {
       wx.hideLoading()
+      const message = error.message || '检查失败，请稍后重试'
+      wx.showToast({
+        title: message,
+        icon: 'none',
+        duration: message.includes('频繁') ? 3000 : 2500
+      })
+    } finally {
       this.setData({ submitting: false })
     }
   },
@@ -129,8 +136,9 @@ Page({
     this.setData({ submitting: true })
     try {
       const settings = await wx.requestSubscribeMessage({ tmplIds: [config.templateId] })
-      if (settings[config.templateId] !== 'accept') {
-        wx.showToast({ title: '未获得订阅授权', icon: 'none' })
+      const authStatus = settings[config.templateId]
+      if (authStatus !== 'accept') {
+        await this.guideSubscriptionSetting(authStatus)
         return
       }
       const { result } = await wx.cloud.callFunction({
@@ -146,5 +154,38 @@ Page({
     } finally {
       this.setData({ submitting: false })
     }
+  },
+
+  guideSubscriptionSetting(authStatus) {
+    const content = authStatus === 'ban'
+      ? '微信订阅消息总开关已关闭，请前往设置开启“接收订阅消息”，然后再次点击订阅。'
+      : '你已拒绝接收该订阅消息。可前往设置重新开启，然后再次点击订阅。'
+    return new Promise(resolve => {
+      wx.showModal({
+        title: '未获得通知授权',
+        content,
+        confirmText: '去设置',
+        cancelText: '暂不开启',
+        success: modalResult => {
+          if (!modalResult.confirm) {
+            resolve()
+            return
+          }
+          // 必须由用户点击弹窗确认后直接打开设置页。
+          wx.openSetting({
+            success: () => {
+              wx.showToast({ title: '请再次点击订阅', icon: 'none' })
+              resolve()
+            },
+            fail: error => {
+              console.error('打开订阅设置失败', error)
+              wx.showToast({ title: '无法打开设置', icon: 'none' })
+              resolve()
+            }
+          })
+        },
+        fail: resolve
+      })
+    })
   }
 })
