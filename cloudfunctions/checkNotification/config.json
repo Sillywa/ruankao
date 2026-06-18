@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "openapi": ["subscribeMessage.send"]
+  },
+  "triggers": [
+    {
+      "name": "check-every-30-minutes",
+      "type": "timer",
+      "config": "0 */30 * * * * *"
+    }
+  ]
+}

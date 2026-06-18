@@ -1,0 +1,4 @@
+{
+  "desc": "软考成绩提醒",
+  "rules": [{ "action": "allow", "page": "*" }]
+}
