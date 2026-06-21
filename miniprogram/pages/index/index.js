@@ -13,8 +13,25 @@ Page({
     latestAnnouncement: null
   },
 
-  onLoad() { this.loadStatus(true) },
+  onLoad() {
+    wx.showShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] })
+    this.loadStatus(true)
+  },
   onPullDownRefresh() { this.loadStatus(true).finally(() => wx.stopPullDownRefresh()) },
+
+  onShareAppMessage() {
+    return {
+      title: this.data.latestNotice ? '成绩已发布，快来查询' : '考试成绩提醒，重要公告及时知道',
+      path: '/pages/index/index'
+    }
+  },
+
+  onShareTimeline() {
+    return {
+      title: this.data.latestNotice ? '成绩已发布，快来查询' : '考试成绩提醒，重要公告及时知道',
+      query: ''
+    }
+  },
 
   async loadStatus(showSkeleton = false) {
     if (showSkeleton) this.setData({ pageLoading: true })

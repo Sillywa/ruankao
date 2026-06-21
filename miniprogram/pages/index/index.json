@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "软考成绩提醒",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "enableShareAppMessage": true,
+  "enableShareTimeline": true
 }
