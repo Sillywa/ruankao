@@ -2,54 +2,70 @@
   <view class="hero">
     <view class="eyebrow">RUANKAO ALERT</view>
     <view class="title">成绩出来时，<text>第一时间告诉你</text></view>
-    <view class="subtitle">每 30 分钟检查中国计算机技术职业资格网的当年最新成绩查询通知。</view>
+    <view class="subtitle">每天 08:00–20:59，每 10 分钟查询中国计算机技术职业资格网的当年最新成绩查询通知。</view>
   </view>
 
   <view class="card status-card">
-    <view class="status-head">
-      <view class="status-dot {{subscribed ? 'active' : ''}}"></view>
-      <view class="status-title">{{subscribed ? '提醒已订阅' : '尚未订阅提醒'}}</view>
+    <view class="skeleton status-skeleton" wx:if="{{pageLoading}}">
+      <view class="skeleton-line skeleton-title"></view>
+      <view class="skeleton-line skeleton-text"></view>
+      <view class="skeleton-line skeleton-text short"></view>
+      <view class="skeleton-line skeleton-button"></view>
     </view>
-    <view class="status-text" wx:if="{{subscribed}}">你已完成订阅，可以随时立即检查最新通知。</view>
-    <view class="status-text" wx:else>点击下方按钮，授权接收一次成绩公布提醒。</view>
+    <block wx:else>
+      <view class="status-head">
+        <view class="status-dot {{latestNotice ? 'published' : (subscribed ? 'active' : '')}}"></view>
+        <view class="status-title">{{latestNotice ? '成绩已发布' : (subscribed ? '提醒已订阅' : '尚未订阅提醒')}}</view>
+      </view>
+      <view class="status-text published-text" wx:if="{{latestNotice}}">已查询到本年度最新成绩查询公告，现在可以前往软考官网查询考试成绩。</view>
+      <view class="status-text" wx:elif="{{subscribed}}">你已完成订阅，可以随时立即查询最新通知。</view>
+      <view class="status-text" wx:else>点击下方按钮，授权接收一次成绩公布提醒。</view>
 
-    <button class="subscribe-btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
-      {{subscribed ? '立即检查' : '订阅成绩提醒'}}
-    </button>
-    <button
-      wx:if="{{subscribed}}"
-      class="cancel-btn"
-      loading="{{cancelling}}"
-      disabled="{{cancelling}}"
-      bindtap="cancelSubscription"
-    >
-      取消订阅
-    </button>
-    <view class="hint" wx:if="{{!subscribed}}">点击按钮授权订阅；取消订阅后可以重新授权。</view>
-    <view class="hint" wx:else>系统仍会每 30 分钟自动检查；手动检查结果也会立即显示在下方。</view>
+      <button class="score-btn" wx:if="{{latestNotice}}" bindtap="openScoreQuery">立即前往</button>
+
+      <button class="subscribe-btn" wx:if="{{!latestNotice || !subscribed}}" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
+        {{subscribed ? '立即查询' : '订阅成绩提醒'}}
+      </button>
+      <view class="hint" wx:if="{{!subscribed}}">点击按钮授权接收成绩公布提醒。</view>
+      <view class="hint" wx:elif="{{!latestNotice}}">系统每天 08:00–20:59 每 10 分钟自动查询；手动查询结果也会立即显示在下方。</view>
+    </block>
   </view>
 
   <view class="card info-card">
-    <view class="section-title">检查状态</view>
-    <view class="row">
-      <text class="label">最近检查</text>
-      <text class="value">{{lastCheckedAt || '等待云端首次检查'}}</text>
-    </view>
-    <view class="row">
-      <text class="label">当前结果</text>
-      <text class="value">{{latestNotice ? '已发现通知' : '暂无当年成绩通知'}}</text>
-    </view>
-    <view class="announcement-row" bindtap="openLatestNotice">
-      <view class="announcement-head">
-        <text class="announcement-label">最新公告</text>
-        <text class="announcement-action" wx:if="{{latestAnnouncement}}">复制链接 ›</text>
+    <view class="skeleton info-skeleton" wx:if="{{pageLoading}}">
+      <view class="skeleton-head">
+        <view class="skeleton-line skeleton-section-title"></view>
+        <view class="skeleton-line skeleton-link"></view>
       </view>
-      <block wx:if="{{latestAnnouncement}}">
-        <text class="announcement-title clickable">{{latestAnnouncement.title}}</text>
-        <text class="announcement-date">发布日期：{{latestAnnouncement.dateText}}</text>
-      </block>
-      <text class="announcement-title empty" wx:else>暂无公告</text>
+      <view class="skeleton-row"><view class="skeleton-line skeleton-label"></view><view class="skeleton-line skeleton-value"></view></view>
+      <view class="skeleton-row"><view class="skeleton-line skeleton-label"></view><view class="skeleton-line skeleton-value small"></view></view>
+      <view class="skeleton-line skeleton-panel"></view>
     </view>
+    <block wx:else>
+      <view class="section-head">
+        <view class="section-title">查询状态</view>
+        <view class="records-link" bindtap="openCheckRecords">自动查询记录 ›</view>
+      </view>
+      <view class="row">
+        <text class="label">最近查询</text>
+        <text class="value">{{lastCheckedAt || '等待云端首次查询'}}</text>
+      </view>
+      <view class="row">
+        <text class="label">当前结果</text>
+        <text class="value">{{latestNotice ? '已发现最新的成绩通知' : '暂无当年成绩通知'}}</text>
+      </view>
+      <view class="announcement-row" bindtap="openLatestNotice">
+        <view class="announcement-head">
+          <text class="announcement-label">最新公告</text>
+          <text class="announcement-action" wx:if="{{latestAnnouncement}}">复制链接 ›</text>
+        </view>
+        <block wx:if="{{latestAnnouncement}}">
+          <text class="announcement-title clickable">{{latestAnnouncement.title}}</text>
+          <text class="announcement-date">发布日期：{{latestAnnouncement.dateText}}</text>
+        </block>
+        <text class="announcement-title empty" wx:else>暂无公告</text>
+      </view>
+    </block>
   </view>
 
   <view class="footer">通知来源：中国计算机技术职业资格网</view>

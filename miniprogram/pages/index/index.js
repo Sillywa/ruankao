@@ -1,7 +1,9 @@
 const config = require('../../config')
+const SCORE_QUERY_URL = 'https://bm.ruankao.org.cn/index.php/query/score'
 
 Page({
   data: {
+    pageLoading: true,
     subscribed: false,
     submitting: false,
     cancelling: false,
@@ -11,10 +13,11 @@ Page({
     latestAnnouncement: null
   },
 
-  onLoad() { this.loadStatus() },
-  onPullDownRefresh() { this.loadStatus().finally(() => wx.stopPullDownRefresh()) },
+  onLoad() { this.loadStatus(true) },
+  onPullDownRefresh() { this.loadStatus(true).finally(() => wx.stopPullDownRefresh()) },
 
-  async loadStatus() {
+  async loadStatus(showSkeleton = false) {
+    if (showSkeleton) this.setData({ pageLoading: true })
     try {
       const { result } = await wx.cloud.callFunction({ name: 'getStatus' })
       if (result && result.ok) {
@@ -28,6 +31,8 @@ Page({
       }
     } catch (error) {
       console.error('读取状态失败', error)
+    } finally {
+      if (showSkeleton) this.setData({ pageLoading: false })
     }
   },
 
@@ -93,15 +98,37 @@ Page({
     })
   },
 
+  openCheckRecords() {
+    wx.navigateTo({ url: '/pages/records/records' })
+  },
+
+  openScoreQuery() {
+    wx.setClipboardData({
+      data: SCORE_QUERY_URL,
+      success() {
+        wx.showModal({
+          title: '复制成功',
+          content: '软考官网成绩查询链接已复制，请前往浏览器粘贴打开查询成绩。',
+          showCancel: false,
+          confirmText: '知道了'
+        })
+      },
+      fail(error) {
+        console.error('复制成绩查询链接失败', error)
+        wx.showToast({ title: '复制失败，请稍后重试', icon: 'none' })
+      }
+    })
+  },
+
   async checkNow() {
     this.setData({ submitting: true })
-    wx.showLoading({ title: '正在检查', mask: true })
+    wx.showLoading({ title: '正在查询', mask: true })
     try {
       const { result } = await wx.cloud.callFunction({
         name: 'checkNotification',
         data: { manual: true }
       })
-      if (!result || !result.ok) throw new Error((result && result.message) || '检查失败')
+      if (!result || !result.ok) throw new Error((result && result.message) || '查询失败')
       await this.loadStatus()
       wx.hideLoading()
       wx.showToast({
@@ -110,9 +137,9 @@ Page({
         duration: 2500
       })
     } catch (error) {
-      console.error('立即检查失败', error)
+      console.error('立即查询失败', error)
       wx.hideLoading()
-      const message = error.message || '检查失败，请稍后重试'
+      const message = error.message || '查询失败，请稍后重试'
       wx.showToast({
         title: message,
         icon: 'none',
@@ -135,7 +162,14 @@ Page({
 
     this.setData({ submitting: true })
     try {
-      const settings = await wx.requestSubscribeMessage({ tmplIds: [config.templateId] })
+      let settings
+      try {
+        settings = await wx.requestSubscribeMessage({ tmplIds: [config.templateId] })
+      } catch (error) {
+        console.error('调用订阅授权失败', error)
+        await this.guideSubscriptionSetting('error')
+        return
+      }
       const authStatus = settings[config.templateId]
       if (authStatus !== 'accept') {
         await this.guideSubscriptionSetting(authStatus)
@@ -157,9 +191,12 @@ Page({
   },
 
   guideSubscriptionSetting(authStatus) {
-    const content = authStatus === 'ban'
-      ? '微信订阅消息总开关已关闭，请前往设置开启“接收订阅消息”，然后再次点击订阅。'
-      : '你已拒绝接收该订阅消息。可前往设置重新开启，然后再次点击订阅。'
+    let content = '你已拒绝接收该订阅消息。可前往设置重新开启，然后再次点击订阅。'
+    if (authStatus === 'ban') {
+      content = '微信订阅消息总开关已关闭，请前往设置开启“接收订阅消息”，然后再次点击订阅。'
+    } else if (authStatus === 'error') {
+      content = '无法调起订阅授权，请前往设置开启“接收订阅消息”，返回后再次点击订阅。'
+    }
     return new Promise(resolve => {
       wx.showModal({
         title: '未获得通知授权',

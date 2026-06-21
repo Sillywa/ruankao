@@ -1,0 +1,14 @@
+.page { min-height: 100vh; padding: 28rpx 30rpx 50rpx; background: #f3f6fb; box-sizing: border-box; }
+.summary { padding: 8rpx 6rpx 28rpx; color: #8b95a7; font-size: 23rpx; }
+.record { margin-bottom: 22rpx; padding: 30rpx; border-radius: 22rpx; background: #fff; box-shadow: 0 10rpx 34rpx rgba(29, 50, 94, .06); }
+.record-head { display: flex; align-items: center; justify-content: space-between; }
+.status { font-size: 27rpx; font-weight: 700; }
+.status.success { color: #18a76b; }
+.status.failed { color: #d65a4a; }
+.time { color: #8b95a7; font-size: 22rpx; }
+.result { margin-top: 20rpx; color: #344057; font-size: 26rpx; line-height: 1.5; }
+.notice { margin-top: 14rpx; padding: 18rpx; border-radius: 14rpx; background: #f5f8ff; color: #2868f0; font-size: 24rpx; line-height: 1.55; }
+.error { margin-top: 14rpx; color: #d65a4a; font-size: 23rpx; line-height: 1.55; word-break: break-all; }
+.meta { display: flex; justify-content: space-between; margin-top: 20rpx; color: #a0a8b7; font-size: 21rpx; }
+.empty, .loading, .end { padding: 80rpx 20rpx; color: #9aa3b4; font-size: 24rpx; text-align: center; }
+.loading, .end { padding: 30rpx 20rpx; }

@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="summary">自动查询记录按时间倒序展示，只展示最新的 30 条记录</view>
+
+  <view class="record" wx:for="{{records}}" wx:key="_id">
+    <view class="record-head">
+      <view class="status {{item.success ? 'success' : 'failed'}}">
+        {{item.success ? '查询成功' : '查询失败'}}
+      </view>
+      <text class="time">{{item.checkedAt}}</text>
+    </view>
+    <view class="result" wx:if="{{item.success}}">
+      {{item.found ? '发现当年成绩查询通知' : '未发现当年成绩查询通知'}}
+    </view>
+    <view class="notice" wx:if="{{item.noticeTitle}}">{{item.noticeTitle}}</view>
+    <view class="error" wx:if="{{item.error}}">{{item.error}}</view>
+    <view class="meta">
+      <text>耗时 {{item.durationMs}}ms</text>
+      <text wx:if="{{item.delivery}}">发送 {{item.delivery.sent}}，失败 {{item.delivery.failed}}</text>
+    </view>
+  </view>
+
+  <view class="empty" wx:if="{{initialized && !records.length}}">暂无自动查询记录</view>
+  <view class="loading" wx:if="{{loading}}">正在加载...</view>
+</view>

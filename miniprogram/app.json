@@ -1,5 +1,8 @@
 {
-  "pages": ["pages/index/index"],
+  "pages": [
+    "pages/index/index",
+    "pages/records/records"
+  ],
   "window": {
     "navigationBarTitleText": "软考成绩提醒",
     "navigationBarBackgroundColor": "#f7f9fc",

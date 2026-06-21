@@ -9,6 +9,24 @@ const SOURCE_URLS = [
   'https://www.ruankao.org.cn/index/work.html'
 ]
 
+async function appendAutomaticCheckLog(data) {
+  try {
+    await db.collection('check_logs').add({ data: { ...data, checkedAt: db.serverDate() } })
+  } catch (error) {
+    console.error('写入自动检查记录失败', error)
+  }
+}
+
+async function appendManualCheckLog(openid, data) {
+  try {
+    await db.collection('manual_check_logs').add({
+      data: { ...data, userOpenid: openid, checkedAt: db.serverDate() }
+    })
+  } catch (error) {
+    console.error('写入手动查询记录失败', error)
+  }
+}
+
 function fetchHtml(url, redirects = 0) {
   return new Promise((resolve, reject) => {
     const request = https.get(url, {
@@ -151,18 +169,53 @@ async function notifySubscribers(notice) {
 
 exports.main = async () => {
   const { OPENID } = cloud.getWXContext()
+  const isAutomatic = !OPENID
+  const startedAt = Date.now()
   // 有 OPENID 表示由小程序手动调用；定时触发器没有用户 OPENID。
   if (OPENID) {
     const subscriber = await db.collection('subscriptions').doc(OPENID).get().catch(() => null)
-    if (!subscriber || !subscriber.data) return { ok: false, message: '请先订阅提醒' }
+    if (!subscriber || !subscriber.data) {
+      await appendManualCheckLog(OPENID, {
+        success: false,
+        found: false,
+        latestNotice: null,
+        latestAnnouncement: null,
+        delivery: null,
+        durationMs: Date.now() - startedAt,
+        error: '请先订阅提醒'
+      })
+      return { ok: false, message: '请先订阅提醒' }
+    }
 
     const lastManualCheckAt = subscriber.data.lastManualCheckAt
     if (lastManualCheckAt && Date.now() - new Date(lastManualCheckAt).getTime() < 60000) {
-      return { ok: false, message: '检查太频繁，请一分钟后再试' }
+      await appendManualCheckLog(OPENID, {
+        success: false,
+        found: false,
+        latestNotice: null,
+        latestAnnouncement: null,
+        delivery: null,
+        durationMs: Date.now() - startedAt,
+        error: '查询太频繁，请一分钟后再试'
+      })
+      return { ok: false, message: '查询太频繁，请一分钟后再试' }
     }
-    await db.collection('subscriptions').doc(OPENID).update({
-      data: { lastManualCheckAt: db.serverDate() }
-    })
+    try {
+      await db.collection('subscriptions').doc(OPENID).update({
+        data: { lastManualCheckAt: db.serverDate() }
+      })
+    } catch (error) {
+      await appendManualCheckLog(OPENID, {
+        success: false,
+        found: false,
+        latestNotice: null,
+        latestAnnouncement: null,
+        delivery: null,
+        durationMs: Date.now() - startedAt,
+        error: String(error.message || error).slice(0, 500)
+      })
+      throw error
+    }
   }
 
   const year = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', year: 'numeric' }).format(new Date()))
@@ -190,12 +243,54 @@ exports.main = async () => {
         lastDelivery: delivery || (previous && previous.data && previous.data.lastDelivery) || null
       }
     })
+    if (isAutomatic) {
+      await appendAutomaticCheckLog({
+        success: true,
+        found: Boolean(latest),
+        latestNotice: latest,
+        latestAnnouncement,
+        delivery,
+        durationMs: Date.now() - startedAt,
+        error: ''
+      })
+    } else {
+      await appendManualCheckLog(OPENID, {
+        success: true,
+        found: Boolean(latest),
+        latestNotice: latest,
+        latestAnnouncement,
+        delivery,
+        durationMs: Date.now() - startedAt,
+        error: ''
+      })
+    }
     return { ok: true, found: Boolean(latest), latest, latestAnnouncement, delivery }
   } catch (error) {
     const errorState = { lastCheckedAt: db.serverDate(), lastError: String(error.message || error).slice(0, 500) }
     // 更新失败时保留上一条通知，避免网络恢复后将同一通知误判为新通知并重复发送。
     await db.collection('system_state').doc('score_notice').update({ data: errorState })
       .catch(() => db.collection('system_state').doc('score_notice').set({ data: errorState }))
+    if (isAutomatic) {
+      await appendAutomaticCheckLog({
+        success: false,
+        found: false,
+        latestNotice: null,
+        latestAnnouncement: null,
+        delivery: null,
+        durationMs: Date.now() - startedAt,
+        error: String(error.message || error).slice(0, 500)
+      })
+    } else {
+      await appendManualCheckLog(OPENID, {
+        success: false,
+        found: false,
+        latestNotice: null,
+        latestAnnouncement: null,
+        delivery: null,
+        durationMs: Date.now() - startedAt,
+        error: String(error.message || error).slice(0, 500)
+      })
+    }
     throw error
   }
 }
