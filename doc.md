@@ -35,6 +35,7 @@ flowchart TB
 | --- | --- | --- |
 | `subscriptions` | OpenID、模板 ID、业务状态、一次性授权状态 | 默认 `_id` |
 | `system_state` | 最近查询、成绩通知、最新公告、发送统计 | 默认 `_id` |
+| `notice_delivery_tasks` | 成绩公告发送任务锁，避免并发重复发送 | 默认 `_id` |
 | `check_logs` | 自动查询成功/失败记录 | `checkedAt` 降序、非唯一 |
 | `manual_check_logs` | 手动查询及一分钟限流记录 | `checkedAt` 降序、非唯一 |
 
@@ -102,7 +103,31 @@ status = subscribed 且 active = true
 }
 ```
 
-### 2.3 查询日志
+### 2.3 `notice_delivery_tasks`
+
+发送成绩提醒前，云函数会按成绩公告 URL 生成 SHA-1 作为文档 ID，并尝试创建一条发送任务：
+
+```json
+{
+  "_id": "公告URL的SHA-1",
+  "noticeUrl": "成绩公告URL",
+  "noticeTitle": "成绩公告标题",
+  "noticeDate": "YYYY-MM-DD",
+  "triggerType": "automatic",
+  "status": "sending",
+  "delivery": {
+    "sent": 0,
+    "failed": 0
+  },
+  "createdAt": "服务端时间",
+  "updatedAt": "服务端时间",
+  "finishedAt": "服务端时间"
+}
+```
+
+由于同一个 `_id` 只能创建一次，自动查询和手动查询即使同时发现同一条成绩公告，也只有第一个创建成功的云函数会真正发送消息。其它并发实例会把本次发送结果记为 `skipped: true`，不会重复通知用户。
+
+### 2.4 查询日志
 
 `check_logs` 只保存定时自动查询；`manual_check_logs` 只保存用户点击“立即查询”。两者均记录：
 
@@ -209,9 +234,11 @@ flowchart TD
     F --> G["写入成功 check_logs"]
     E --> H{"成绩通知URL是否为新URL?"}
     H -- 否 --> I["不发送"]
-    H -- 是 --> J["筛选 subscribed + active 用户"]
-    J --> K["发送微信订阅消息"]
-    K --> L["active=false"]
+    H -- 是 --> J{"创建 notice_delivery_tasks 成功?"}
+    J -- 否 --> M["并发任务已在发送，跳过"]
+    J -- 是 --> K["筛选 subscribed + active 用户"]
+    K --> L["发送微信订阅消息"]
+    L --> N["active=false，任务标记 finished"]
 ```
 
 自动查询无论成功或失败都会尝试写入 `check_logs`。自动查询记录页通过独立云函数 `getCheckRecords` 按时间倒序读取最新 30 条，支持下拉刷新，不支持分页加载更多。
@@ -261,7 +288,7 @@ flowchart LR
 system_state / score_notice / latestNotice.url
 ```
 
-只有新 URL 与上次 URL 不同，才调用消息发送。手动查询与自动查询使用同一个去重状态，所以同一公告不会因为白天每 10 分钟执行而重复发送。
+只有新 URL 与上次 URL 不同，才调用消息发送。手动查询与自动查询使用同一个去重状态，并且发送前会创建 `notice_delivery_tasks` 任务锁，所以同一公告不会因为白天每 10 分钟执行或手动/自动并发执行而重复发送。
 
 ## 9. 最新公告
 
@@ -309,7 +336,7 @@ system_state / score_notice / latestNotice.url
 - [ ] 已配置小程序 AppID；
 - [ ] 已配置云环境 ID；
 - [ ] 已配置订阅消息模板 ID 与字段；
-- [ ] 已创建四个数据库集合；
+- [ ] 已创建五个数据库集合；
 - [ ] 两个日志集合的 `checkedAt` 为降序、非唯一索引；
 - [ ] 已部署 `subscribe`；
 - [ ] 已部署 `getStatus`；

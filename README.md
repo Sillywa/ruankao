@@ -66,6 +66,7 @@ flowchart LR
 | --- | --- | --- |
 | `subscriptions` | 用户订阅业务状态与一次性消息授权状态 | 默认 `_id` |
 | `system_state` | 最近查询结果、成绩公告、最新公告及去重 URL | 默认 `_id` |
+| `notice_delivery_tasks` | 成绩公告发送任务锁，防止自动/手动并发重复发送 | 默认 `_id` |
 | `check_logs` | 每次自动查询的成功或失败记录 | `checkedAt` 降序、非唯一 |
 | `manual_check_logs` | 每次点击“立即查询”的记录，包括限流失败 | `checkedAt` 降序、非唯一 |
 
@@ -103,7 +104,7 @@ flowchart LR
    - `date2`：发布日期；
    - `thing3`：温馨提示。
 5. 将模板 ID 写入 `miniprogram/config.js`。如果字段名不同，同步修改 `checkNotification/index.js` 的 `messageData`。
-6. 创建 `subscriptions`、`system_state`、`check_logs`、`manual_check_logs` 四个集合。
+6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`check_logs`、`manual_check_logs` 五个集合。
 7. 为 `check_logs.checkedAt` 和 `manual_check_logs.checkedAt` 创建降序、非唯一索引。
 8. 上传并部署四个正式云函数：
    - `subscribe`；
@@ -177,6 +178,12 @@ system_state / score_notice / latestNotice.url
 ```
 
 只有 URL 与上次记录不同才会触发群发。
+
+为避免自动查询和手动查询并发执行时重复群发，同一公告 URL 会先写入 `notice_delivery_tasks`：
+
+- 文档 ID 为公告 URL 的 SHA-1；
+- 只有第一个创建成功的云函数会发送订阅消息；
+- 后续并发执行会标记为跳过发送，不会重复通知用户。
 
 ## 一次性订阅消息限制
 

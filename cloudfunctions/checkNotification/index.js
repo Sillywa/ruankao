@@ -1,4 +1,5 @@
 const https = require('https')
+const crypto = require('crypto')
 const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 const db = cloud.database()
@@ -8,6 +9,7 @@ const SOURCE_URLS = [
   'https://www.ruankao.org.cn/index.html',
   'https://www.ruankao.org.cn/index/work.html'
 ]
+const DELIVERY_TASK_COLLECTION = 'notice_delivery_tasks'
 
 async function appendAutomaticCheckLog(data) {
   try {
@@ -113,6 +115,52 @@ function messageData(notice) {
   }
 }
 
+function deliveryTaskId(notice) {
+  return crypto.createHash('sha1').update(notice.url).digest('hex')
+}
+
+async function acquireDeliveryTask(notice, triggerType) {
+  const taskId = deliveryTaskId(notice)
+  try {
+    await db.collection(DELIVERY_TASK_COLLECTION).add({
+      data: {
+        _id: taskId,
+        noticeUrl: notice.url,
+        noticeTitle: notice.title,
+        noticeDate: notice.date,
+        triggerType,
+        status: 'sending',
+        createdAt: db.serverDate(),
+        updatedAt: db.serverDate()
+      }
+    })
+    return { acquired: true, taskId }
+  } catch (error) {
+    const existing = await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get().catch(() => null)
+    if (!existing || !existing.data) throw error
+    return {
+      acquired: false,
+      taskId,
+      status: existing && existing.data && existing.data.status,
+      error: String(error.errMsg || error.message || error).slice(0, 500)
+    }
+  }
+}
+
+async function finishDeliveryTask(taskId, status, delivery, error) {
+  await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).update({
+    data: {
+      status,
+      delivery: delivery || null,
+      error: error ? String(error.errMsg || error.message || error).slice(0, 500) : '',
+      updatedAt: db.serverDate(),
+      finishedAt: db.serverDate()
+    }
+  }).catch(updateError => {
+    console.error('更新通知发送任务失败', updateError)
+  })
+}
+
 async function migrateLegacySubscriptions() {
   while (true) {
     const { data } = await db.collection('subscriptions')
@@ -131,6 +179,7 @@ async function notifySubscribers(notice) {
   await migrateLegacySubscriptions()
   let sent = 0
   let failed = 0
+  let updateFailed = 0
   let lastId = ''
   while (true) {
     const condition = lastId
@@ -150,21 +199,38 @@ async function notifySubscribers(notice) {
           lang: 'zh_CN',
           data: messageData(notice)
         })
-        await db.collection('subscriptions').doc(subscriber._id).update({
-          data: { active: false, notifiedAt: db.serverDate(), noticeUrl: notice.url, lastError: '' }
-        })
         sent += 1
+        try {
+          await db.collection('subscriptions').doc(subscriber._id).update({
+            data: { active: false, notifiedAt: db.serverDate(), noticeUrl: notice.url, lastError: '' }
+          })
+        } catch (updateError) {
+          updateFailed += 1
+          console.error('订阅消息发送成功，但更新订阅记录失败', {
+            subscriberId: subscriber._id,
+            error: String(updateError.errMsg || updateError.message || updateError).slice(0, 500)
+          })
+        }
       } catch (error) {
-        await db.collection('subscriptions').doc(subscriber._id).update({
-          data: { active: false, failedAt: db.serverDate(), lastError: String(error.errMsg || error.message || error).slice(0, 500) }
-        })
         failed += 1
+        try {
+          await db.collection('subscriptions').doc(subscriber._id).update({
+            data: { active: false, failedAt: db.serverDate(), lastError: String(error.errMsg || error.message || error).slice(0, 500) }
+          })
+        } catch (updateError) {
+          updateFailed += 1
+          console.error('订阅消息发送失败，且更新失败状态失败', {
+            subscriberId: subscriber._id,
+            sendError: String(error.errMsg || error.message || error).slice(0, 500),
+            updateError: String(updateError.errMsg || updateError.message || updateError).slice(0, 500)
+          })
+        }
       }
     }
     lastId = data[data.length - 1]._id
     if (data.length < 100) break
   }
-  return { sent, failed }
+  return { sent, failed, updateFailed }
 }
 
 exports.main = async () => {
@@ -232,7 +298,27 @@ exports.main = async () => {
     const previousUrl = previous && previous.data && previous.data.latestNotice && previous.data.latestNotice.url
     let delivery = null
 
-    if (latest && latest.url !== previousUrl) delivery = await notifySubscribers(latest)
+    if (latest && latest.url !== previousUrl) {
+      const deliveryTask = await acquireDeliveryTask(latest, isAutomatic ? 'automatic' : 'manual')
+      if (deliveryTask.acquired) {
+        try {
+          delivery = await notifySubscribers(latest)
+          await finishDeliveryTask(deliveryTask.taskId, 'finished', delivery)
+        } catch (notifyError) {
+          await finishDeliveryTask(deliveryTask.taskId, 'failed', null, notifyError)
+          throw notifyError
+        }
+      } else {
+        delivery = {
+          sent: 0,
+          failed: 0,
+          skipped: true,
+          reason: 'same_notice_delivery_already_started',
+          taskId: deliveryTask.taskId,
+          status: deliveryTask.status || 'unknown'
+        }
+      }
+    }
 
     await db.collection('system_state').doc('score_notice').set({
       data: {
