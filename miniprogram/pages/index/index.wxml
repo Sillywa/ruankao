@@ -23,10 +23,10 @@
 
       <button class="score-btn" wx:if="{{latestNotice}}" bindtap="openScoreQuery">立即前往</button>
 
-      <button class="subscribe-btn" wx:if="{{!latestNotice || !subscribed}}" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
+      <button class="subscribe-btn" wx:if="{{!latestNotice}}" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
         {{subscribed ? '立即查询' : '订阅成绩提醒'}}
       </button>
-      <view class="hint" wx:if="{{!subscribed}}">点击按钮授权接收成绩公布提醒。</view>
+      <view class="hint" wx:if="{{!latestNotice && !subscribed}}">点击按钮授权接收成绩公布提醒。</view>
       <view class="hint" wx:elif="{{!latestNotice}}">系统每天 08:00–20:59 每 10 分钟自动查询；手动查询结果也会立即显示在下方。</view>
     </block>
   </view>
