@@ -7,6 +7,7 @@ Page({
     subscribed: false,
     submitting: false,
     cancelling: false,
+    isAdmin: false,
     notificationActive: false,
     lastCheckedAt: '',
     latestNotice: null,
@@ -40,6 +41,7 @@ Page({
       if (result && result.ok) {
         this.setData({
           subscribed: result.subscribed,
+          isAdmin: Boolean(result.isAdmin),
           notificationActive: result.notificationActive,
           lastCheckedAt: result.lastCheckedAt || '',
           latestNotice: result.latestNotice || null,
@@ -117,6 +119,16 @@ Page({
 
   openCheckRecords() {
     wx.navigateTo({ url: '/pages/records/records' })
+  },
+
+  openAdmin() {
+    wx.navigateTo({
+      url: '/pages/admin/admin',
+      fail(error) {
+        console.error('打开管理后台失败', error)
+        wx.showToast({ title: '打开管理后台失败', icon: 'none' })
+      }
+    })
   },
 
   openScoreQuery() {

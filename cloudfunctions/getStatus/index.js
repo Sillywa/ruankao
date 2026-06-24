@@ -1,6 +1,7 @@
 const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 const db = cloud.database()
+const ADMIN_OPENID = 'ouQIY0UogBHEkYzGs9A9BqP7JAL4'
 
 function formatDate(value) {
   if (!value) return ''
@@ -27,6 +28,7 @@ exports.main = async () => {
     // 文档存在即表示已经订阅过；消息是否已消费不影响“一人只能订阅一次”。
     subscribed: subscriptionStatus === 'subscribed',
     subscriptionStatus,
+    isAdmin: OPENID === ADMIN_OPENID,
     notificationActive: Boolean(subscription && subscription.data && subscription.data.active),
     lastCheckedAt: formatDate(status && status.lastCheckedAt),
     latestNotice: status && status.latestNotice ? status.latestNotice : null,

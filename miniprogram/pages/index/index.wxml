@@ -68,5 +68,6 @@
     </block>
   </view>
 
+  <view class="admin-link" wx:if="{{isAdmin}}" hover-class="admin-link-hover" bindtap="openAdmin">管理后台</view>
   <view class="footer">通知来源：中国计算机技术职业资格网</view>
 </view>

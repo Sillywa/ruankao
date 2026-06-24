@@ -12,6 +12,7 @@
 - 点击“立即前往”复制软考官网成绩查询链接；
 - 展示软考网最新一条任意类型公告及发布日期；
 - 展示最新 30 条自动查询记录；
+- 指定管理员可进入“管理后台”，查看通知发送成功/失败汇总；
 - 自动查询和手动查询分别写入日志集合；
 - 首次进入和下拉刷新显示骨架屏，手动查询不显示骨架屏；
 - 首页支持发送给朋友和分享到朋友圈，并根据成绩发布状态生成分享标题；
@@ -29,12 +30,14 @@
 miniprogram/
   pages/index/                 首页
   pages/records/               自动查询记录页
+  pages/admin/                 管理后台，仅指定 OpenID 可见
   assets/                      小程序资源
 cloudfunctions/
   subscribe/                   保存和更新订阅状态
   getStatus/                   读取首页状态
   checkNotification/           自动/手动查询、去重、发送、写日志
   getCheckRecords/             读取最新 30 条自动查询记录
+  getAdminStats/               管理后台发送统计，仅管理员可访问
 docs/assets/                   文档原型图
 doc.md                         详细交互与数据说明
 ```
@@ -106,11 +109,12 @@ flowchart LR
 5. 将模板 ID 写入 `miniprogram/config.js`。如果字段名不同，同步修改 `checkNotification/index.js` 的 `messageData`。
 6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`check_logs`、`manual_check_logs` 五个集合。
 7. 为 `check_logs.checkedAt` 和 `manual_check_logs.checkedAt` 创建降序、非唯一索引。
-8. 上传并部署四个正式云函数：
+8. 上传并部署五个正式云函数：
    - `subscribe`；
    - `getStatus`；
    - `checkNotification`；
-   - `getCheckRecords`。
+   - `getCheckRecords`；
+   - `getAdminStats`。
 9. 确认 `checkNotification` 定时触发器已启用：
 
 ```text
@@ -156,6 +160,13 @@ flowchart LR
 - 按 `checkedAt` 倒序；
 - 页面仅展示最新 30 条；
 - 支持下拉刷新，不再分页或加载更多。
+
+### 管理后台
+
+- 仅 OpenID 为 `ouQIY0UogBHEkYzGs9A9BqP7JAL4` 的用户可在首页看到“管理后台”按钮；
+- 后台云函数 `getAdminStats` 会再次校验 OpenID，非管理员无法读取；
+- 页面展示发送成功总数、发送失败总数、订阅记录更新失败总数、发送任务总数；
+- 页面展示最近 20 条发送任务。
 
 ## 成绩公告匹配与去重
 

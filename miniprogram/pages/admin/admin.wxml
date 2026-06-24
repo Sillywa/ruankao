@@ -1,0 +1,59 @@
+<view class="page">
+  <view class="summary">仅管理员可见，用于查看成绩通知发送总体结果。</view>
+
+  <view class="error-card" wx:if="{{errorMessage}}">{{errorMessage}}</view>
+
+  <view class="card stats-card" wx:if="{{stats}}">
+    <view class="section-title">发送概览</view>
+    <view class="grid">
+      <view class="stat">
+        <view class="number">{{stats.totalSent}}</view>
+        <view class="label">发送成功</view>
+      </view>
+      <view class="stat danger">
+        <view class="number">{{stats.totalFailed}}</view>
+        <view class="label">发送失败</view>
+      </view>
+      <view class="stat warning">
+        <view class="number">{{stats.totalUpdateFailed}}</view>
+        <view class="label">记录更新失败</view>
+      </view>
+      <view class="stat">
+        <view class="number">{{stats.totalTasks}}</view>
+        <view class="label">发送任务</view>
+      </view>
+    </view>
+    <view class="task-status">
+      <text>已完成 {{stats.finishedTasks}}</text>
+      <text>发送中 {{stats.sendingTasks}}</text>
+      <text>异常 {{stats.failedTasks}}</text>
+    </view>
+  </view>
+
+  <view class="section-head" wx:if="{{!errorMessage}}">
+    <view class="section-title">最近发送任务</view>
+    <view class="refresh" bindtap="loadStats">刷新</view>
+  </view>
+
+  <block wx:if="{{!errorMessage}}">
+    <view class="task" wx:for="{{recentTasks}}" wx:key="_id">
+      <view class="task-head">
+        <view class="status {{item.status}}">{{item.status}}</view>
+        <text class="time">{{item.createdAt}}</text>
+      </view>
+      <view class="notice">{{item.noticeTitle || '未记录公告标题'}}</view>
+      <view class="meta">
+        <text>成功 {{item.sent}}</text>
+        <text>失败 {{item.failed}}</text>
+        <text>更新失败 {{item.updateFailed}}</text>
+      </view>
+      <view class="sub-meta">
+        <text>{{item.triggerType || 'unknown'}}</text>
+        <text wx:if="{{item.finishedAt}}">完成 {{item.finishedAt}}</text>
+      </view>
+    </view>
+  </block>
+
+  <view class="empty" wx:if="{{initialized && !errorMessage && !recentTasks.length}}">暂无发送任务</view>
+  <view class="loading" wx:if="{{loading}}">正在加载...</view>
+</view>

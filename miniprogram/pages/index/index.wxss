@@ -52,3 +52,5 @@
 .skeleton-panel { margin-top: 34rpx; width: 100%; height: 112rpx; border-radius: 18rpx; }
 @keyframes skeleton-shimmer { from { left: -100%; } to { left: 100%; } }
 .footer { padding: 18rpx 0; color: #a5adbb; font-size: 22rpx; text-align: center; }
+.admin-link { display: block; padding: 6rpx 0; color: #2868f0; font-size: 22rpx; text-align: center; }
+.admin-link-hover { opacity: .65; }

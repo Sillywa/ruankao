@@ -331,7 +331,20 @@ system_state / score_notice / latestNotice.url
 - 已发现成绩公告时，标题为“成绩已发布，快来查询”；
 - 分享路径统一为首页 `/pages/index/index`。
 
-## 13. 部署核对表
+## 13. 管理后台
+
+- 首页仅对 OpenID 为 `ouQIY0UogBHEkYzGs9A9BqP7JAL4` 的用户展示“管理后台”按钮；
+- 按钮进入 `/pages/admin/admin`；
+- 管理后台通过 `getAdminStats` 云函数读取 `notice_delivery_tasks`；
+- `getAdminStats` 会在云函数内再次校验 OpenID，非管理员返回“无权限访问”；
+- 页面展示：
+  - 发送成功总数；
+  - 发送失败总数；
+  - 订阅记录更新失败总数；
+  - 发送任务总数；
+  - 最近 20 条发送任务。
+
+## 14. 部署核对表
 
 - [ ] 已配置小程序 AppID；
 - [ ] 已配置云环境 ID；
@@ -342,5 +355,6 @@ system_state / score_notice / latestNotice.url
 - [ ] 已部署 `getStatus`；
 - [ ] 已部署 `checkNotification`；
 - [ ] 已部署 `getCheckRecords`；
+- [ ] 已部署 `getAdminStats`；
 - [ ] 定时触发器为 `0 */10 8-20 * * * *`；
 - [ ] 已编译并上传前端。
