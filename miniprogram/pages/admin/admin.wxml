@@ -14,6 +14,10 @@
         <view class="number">{{stats.totalFailed}}</view>
         <view class="label">发送失败</view>
       </view>
+      <view class="stat danger">
+        <view class="number">{{stats.totalAuthFailed}}</view>
+        <view class="label">授权失效</view>
+      </view>
       <view class="stat warning">
         <view class="number">{{stats.totalUpdateFailed}}</view>
         <view class="label">记录更新失败</view>
@@ -45,6 +49,9 @@
       <view class="meta">
         <text>成功 {{item.sent}}</text>
         <text>失败 {{item.failed}}</text>
+      </view>
+      <view class="meta">
+        <text>授权失效 {{item.authFailed}}</text>
         <text>更新失败 {{item.updateFailed}}</text>
       </view>
       <view class="sub-meta">

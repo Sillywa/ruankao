@@ -119,6 +119,26 @@ function deliveryTaskId(notice) {
   return crypto.createHash('sha1').update(notice.url).digest('hex')
 }
 
+function errorText(error) {
+  return String(error && (error.errMsg || error.message || error)).slice(0, 500)
+}
+
+function errorCode(error) {
+  if (!error) return null
+  if (typeof error.errCode === 'number') return error.errCode
+  if (typeof error.errcode === 'number') return error.errcode
+  const text = errorText(error)
+  const match = text.match(/errCode[:：]?\s*(-?\d+)|errcode[:：]?\s*(-?\d+)/i)
+  return match ? Number(match[1] || match[2]) : null
+}
+
+function isAuthorizationInvalidError(error) {
+  const code = errorCode(error)
+  if (code === 43101) return true
+  const text = errorText(error).toLowerCase()
+  return /user refuse|not subscribe|not accept|subscribe.*expired|没有订阅|未订阅|拒绝/.test(text)
+}
+
 async function acquireDeliveryTask(notice, triggerType) {
   const taskId = deliveryTaskId(notice)
   try {
@@ -142,7 +162,7 @@ async function acquireDeliveryTask(notice, triggerType) {
       acquired: false,
       taskId,
       status: existing && existing.data && existing.data.status,
-      error: String(error.errMsg || error.message || error).slice(0, 500)
+      error: errorText(error)
     }
   }
 }
@@ -152,7 +172,7 @@ async function finishDeliveryTask(taskId, status, delivery, error) {
     data: {
       status,
       delivery: delivery || null,
-      error: error ? String(error.errMsg || error.message || error).slice(0, 500) : '',
+      error: error ? errorText(error) : '',
       updatedAt: db.serverDate(),
       finishedAt: db.serverDate()
     }
@@ -179,6 +199,7 @@ async function notifySubscribers(notice) {
   await migrateLegacySubscriptions()
   let sent = 0
   let failed = 0
+  let authFailed = 0
   let updateFailed = 0
   let lastId = ''
   while (true) {
@@ -208,21 +229,41 @@ async function notifySubscribers(notice) {
           updateFailed += 1
           console.error('订阅消息发送成功，但更新订阅记录失败', {
             subscriberId: subscriber._id,
-            error: String(updateError.errMsg || updateError.message || updateError).slice(0, 500)
+            error: errorText(updateError)
           })
         }
       } catch (error) {
         failed += 1
+        const isAuthInvalid = isAuthorizationInvalidError(error)
+        if (isAuthInvalid) authFailed += 1
         try {
-          await db.collection('subscriptions').doc(subscriber._id).update({
-            data: { active: false, failedAt: db.serverDate(), lastError: String(error.errMsg || error.message || error).slice(0, 500) }
-          })
+          if (isAuthInvalid) {
+            await db.collection('subscriptions').doc(subscriber._id).update({
+              data: {
+                active: false,
+                failedAt: db.serverDate(),
+                lastError: errorText(error),
+                lastErrCode: errorCode(error),
+                lastFailureType: 'authorization_invalid'
+              }
+            })
+          } else {
+            await db.collection('subscriptions').doc(subscriber._id).update({
+              data: {
+                active: true,
+                failedAt: db.serverDate(),
+                lastError: errorText(error),
+                lastErrCode: errorCode(error),
+                lastFailureType: 'temporary_or_unknown'
+              }
+            })
+          }
         } catch (updateError) {
           updateFailed += 1
           console.error('订阅消息发送失败，且更新失败状态失败', {
             subscriberId: subscriber._id,
-            sendError: String(error.errMsg || error.message || error).slice(0, 500),
-            updateError: String(updateError.errMsg || updateError.message || updateError).slice(0, 500)
+            sendError: errorText(error),
+            updateError: errorText(updateError)
           })
         }
       }
@@ -230,7 +271,7 @@ async function notifySubscribers(notice) {
     lastId = data[data.length - 1]._id
     if (data.length < 100) break
   }
-  return { sent, failed, updateFailed }
+  return { sent, failed, authFailed, updateFailed }
 }
 
 exports.main = async () => {

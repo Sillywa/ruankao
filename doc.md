@@ -63,7 +63,7 @@ flowchart TB
 | `status: subscribed` | 用户业务状态为订阅中 |
 | `status: cancelled` | 用户业务状态为已取消 |
 | `active: true` | 当前还有可用的一次性消息授权 |
-| `active: false` | 授权已发送、发送失败失效，或用户已取消 |
+| `active: false` | 授权已发送、授权失效，或用户已取消 |
 
 自动通知必须同时满足：
 
@@ -238,7 +238,9 @@ flowchart TD
     J -- 否 --> M["并发任务已在发送，跳过"]
     J -- 是 --> K["筛选 subscribed + active 用户"]
     K --> L["发送微信订阅消息"]
-    L --> N["active=false，任务标记 finished"]
+    L --> N{"发送结果分类"}
+    N --> O["成功或授权失效：active=false"]
+    N --> P["临时错误：active=true，记录错误"]
 ```
 
 自动查询无论成功或失败都会尝试写入 `check_logs`。自动查询记录页通过独立云函数 `getCheckRecords` 按时间倒序读取最新 30 条，支持下拉刷新，不支持分页加载更多。
@@ -305,7 +307,8 @@ system_state / score_notice / latestNotice.url
 当前使用微信一次性订阅消息：
 
 - 每次授权最多发送一条；
-- 发送成功或失败后，代码都将 `active` 更新为 `false`；
+- 发送成功或授权失效后，代码将 `active` 更新为 `false`；
+- 临时或未知发送错误不会关闭 `active`，只记录错误信息；
 - 用户可能处于 `status: subscribed`、`active: false`；
 - 此时页面仍可能显示“提醒已订阅”和“立即查询”，但不能再收到下一条自动提醒；
 - 当前前端隐藏取消入口，因此没有直接的重新授权入口；
@@ -340,6 +343,7 @@ system_state / score_notice / latestNotice.url
 - 页面展示：
   - 发送成功总数；
   - 发送失败总数；
+  - 授权失效总数；
   - 订阅记录更新失败总数；
   - 发送任务总数；
   - 最近 20 条发送任务。

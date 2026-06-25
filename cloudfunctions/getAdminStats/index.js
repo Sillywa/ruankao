@@ -34,6 +34,7 @@ function normalizeTask(task) {
     status: task.status || '',
     sent: toNumber(delivery.sent),
     failed: toNumber(delivery.failed),
+    authFailed: toNumber(delivery.authFailed),
     updateFailed: toNumber(delivery.updateFailed),
     createdAt: formatDate(task.createdAt),
     finishedAt: formatDate(task.finishedAt || task.updatedAt)
@@ -55,6 +56,7 @@ exports.main = async () => {
     sendingTasks: 0,
     totalSent: 0,
     totalFailed: 0,
+    totalAuthFailed: 0,
     totalUpdateFailed: 0
   }
 
@@ -78,6 +80,7 @@ exports.main = async () => {
     const delivery = deliveryOf(task)
     stats.totalSent += toNumber(delivery.sent)
     stats.totalFailed += toNumber(delivery.failed)
+    stats.totalAuthFailed += toNumber(delivery.authFailed)
     stats.totalUpdateFailed += toNumber(delivery.updateFailed)
   }
 
