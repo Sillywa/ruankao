@@ -119,6 +119,11 @@ function deliveryTaskId(notice) {
   return crypto.createHash('sha1').update(notice.url).digest('hex')
 }
 
+function retryDeliveryTaskId(notice) {
+  const tenMinuteBucket = Math.floor(Date.now() / (10 * 60 * 1000))
+  return `retry_${crypto.createHash('sha1').update(`${notice.url}:${tenMinuteBucket}`).digest('hex')}`
+}
+
 function errorText(error) {
   return String(error && (error.errMsg || error.message || error)).slice(0, 500)
 }
@@ -140,7 +145,7 @@ function isAuthorizationInvalidError(error) {
 }
 
 async function acquireDeliveryTask(notice, triggerType) {
-  const taskId = deliveryTaskId(notice)
+  const taskId = triggerType === 'retry' ? retryDeliveryTaskId(notice) : deliveryTaskId(notice)
   try {
     await db.collection(DELIVERY_TASK_COLLECTION).add({
       data: {
@@ -149,6 +154,7 @@ async function acquireDeliveryTask(notice, triggerType) {
         noticeTitle: notice.title,
         noticeDate: notice.date,
         triggerType,
+        parentTaskId: triggerType === 'retry' ? deliveryTaskId(notice) : '',
         status: 'sending',
         createdAt: db.serverDate(),
         updatedAt: db.serverDate()
@@ -195,7 +201,7 @@ async function migrateLegacySubscriptions() {
   }
 }
 
-async function notifySubscribers(notice) {
+async function notifySubscribers(notice, extraCondition = {}) {
   await migrateLegacySubscriptions()
   let sent = 0
   let failed = 0
@@ -203,9 +209,12 @@ async function notifySubscribers(notice) {
   let updateFailed = 0
   let lastId = ''
   while (true) {
-    const condition = lastId
-      ? { active: true, status: 'subscribed', _id: _.gt(lastId) }
-      : { active: true, status: 'subscribed' }
+    const condition = {
+      active: true,
+      status: 'subscribed',
+      ...extraCondition,
+      ...(lastId ? { _id: _.gt(lastId) } : {})
+    }
     const query = db.collection('subscriptions').where(condition)
     const { data } = await query.orderBy('_id', 'asc').limit(100).get()
     if (!data.length) break
@@ -223,7 +232,15 @@ async function notifySubscribers(notice) {
         sent += 1
         try {
           await db.collection('subscriptions').doc(subscriber._id).update({
-            data: { active: false, notifiedAt: db.serverDate(), noticeUrl: notice.url, lastError: '' }
+            data: {
+              active: false,
+              notifiedAt: db.serverDate(),
+              noticeUrl: notice.url,
+              failedNoticeUrl: '',
+              lastFailureType: '',
+              lastError: '',
+              lastErrCode: null
+            }
           })
         } catch (updateError) {
           updateFailed += 1
@@ -242,6 +259,7 @@ async function notifySubscribers(notice) {
               data: {
                 active: false,
                 failedAt: db.serverDate(),
+                failedNoticeUrl: notice.url,
                 lastError: errorText(error),
                 lastErrCode: errorCode(error),
                 lastFailureType: 'authorization_invalid'
@@ -252,6 +270,7 @@ async function notifySubscribers(notice) {
               data: {
                 active: true,
                 failedAt: db.serverDate(),
+                failedNoticeUrl: notice.url,
                 lastError: errorText(error),
                 lastErrCode: errorCode(error),
                 lastFailureType: 'temporary_or_unknown'
@@ -272,6 +291,23 @@ async function notifySubscribers(notice) {
     if (data.length < 100) break
   }
   return { sent, failed, authFailed, updateFailed }
+}
+
+async function retryTemporaryFailures(notice) {
+  return notifySubscribers(notice, {
+    failedNoticeUrl: notice.url,
+    lastFailureType: 'temporary_or_unknown'
+  })
+}
+
+async function hasTemporaryFailures(notice) {
+  const { data } = await db.collection('subscriptions').where({
+    active: true,
+    status: 'subscribed',
+    failedNoticeUrl: notice.url,
+    lastFailureType: 'temporary_or_unknown'
+  }).limit(1).get()
+  return data.length > 0
 }
 
 exports.main = async () => {
@@ -355,6 +391,28 @@ exports.main = async () => {
           failed: 0,
           skipped: true,
           reason: 'same_notice_delivery_already_started',
+          taskId: deliveryTask.taskId,
+          status: deliveryTask.status || 'unknown'
+        }
+      }
+    } else if (latest && latest.url === previousUrl && await hasTemporaryFailures(latest)) {
+      const deliveryTask = await acquireDeliveryTask(latest, 'retry')
+      if (deliveryTask.acquired) {
+        try {
+          delivery = await retryTemporaryFailures(latest)
+          await finishDeliveryTask(deliveryTask.taskId, 'finished', delivery)
+        } catch (notifyError) {
+          await finishDeliveryTask(deliveryTask.taskId, 'failed', null, notifyError)
+          throw notifyError
+        }
+      } else {
+        delivery = {
+          sent: 0,
+          failed: 0,
+          authFailed: 0,
+          updateFailed: 0,
+          skipped: true,
+          reason: 'same_notice_retry_already_started',
           taskId: deliveryTask.taskId,
           status: deliveryTask.status || 'unknown'
         }

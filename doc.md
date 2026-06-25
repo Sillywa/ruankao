@@ -233,14 +233,17 @@ flowchart TD
     E --> F["更新 system_state"]
     F --> G["写入成功 check_logs"]
     E --> H{"成绩通知URL是否为新URL?"}
-    H -- 否 --> I["不发送"]
+    H -- 否 --> I{"是否有临时失败用户?"}
+    I -- 否 --> Q["不发送"]
+    I -- 是 --> R["创建 retry 补发任务"]
+    R --> S["只补发临时失败用户"]
     H -- 是 --> J{"创建 notice_delivery_tasks 成功?"}
     J -- 否 --> M["并发任务已在发送，跳过"]
     J -- 是 --> K["筛选 subscribed + active 用户"]
     K --> L["发送微信订阅消息"]
     L --> N{"发送结果分类"}
     N --> O["成功或授权失效：active=false"]
-    N --> P["临时错误：active=true，记录错误"]
+    N --> P["临时错误：active=true，下次补发"]
 ```
 
 自动查询无论成功或失败都会尝试写入 `check_logs`。自动查询记录页通过独立云函数 `getCheckRecords` 按时间倒序读取最新 30 条，支持下拉刷新，不支持分页加载更多。
@@ -290,7 +293,9 @@ flowchart LR
 system_state / score_notice / latestNotice.url
 ```
 
-只有新 URL 与上次 URL 不同，才调用消息发送。手动查询与自动查询使用同一个去重状态，并且发送前会创建 `notice_delivery_tasks` 任务锁，所以同一公告不会因为白天每 10 分钟执行或手动/自动并发执行而重复发送。
+只有新 URL 与上次 URL 不同，才触发全量消息发送。手动查询与自动查询使用同一个去重状态，并且发送前会创建 `notice_delivery_tasks` 任务锁，所以同一公告不会因为白天每 10 分钟执行或手动/自动并发执行而重复全量发送。
+
+如果同一公告上次发送时有临时或未知错误用户，系统会保留这些用户的 `active=true`，并记录 `failedNoticeUrl=当前公告URL`、`lastFailureType=temporary_or_unknown`。后续检查到同一公告时，会创建 `retry_` 开头的 10 分钟时间片补发任务，只对这些临时失败用户继续补发。
 
 ## 9. 最新公告
 
@@ -308,7 +313,7 @@ system_state / score_notice / latestNotice.url
 
 - 每次授权最多发送一条；
 - 发送成功或授权失效后，代码将 `active` 更新为 `false`；
-- 临时或未知发送错误不会关闭 `active`，只记录错误信息；
+- 临时或未知发送错误不会关闭 `active`，下次检查同一公告时会继续补发；
 - 用户可能处于 `status: subscribed`、`active: false`；
 - 此时页面仍可能显示“提醒已订阅”和“立即查询”，但不能再收到下一条自动提醒；
 - 当前前端隐藏取消入口，因此没有直接的重新授权入口；
