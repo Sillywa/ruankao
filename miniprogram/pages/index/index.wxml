@@ -1,7 +1,7 @@
 <view class="page">
   <view class="hero">
-    <view class="eyebrow">PASSLARK ALERT</view>
-    <view class="title">PassLark<text>成绩出来时，第一时间告诉你</text></view>
+    <view class="eyebrow">RUANKAO ALERT</view>
+    <view class="title">成绩出来时，<text>第一时间告诉你</text></view>
     <view class="subtitle">每天 08:00–20:59，每 10 分钟查询中国计算机技术职业资格网的当年最新成绩查询通知。</view>
   </view>
 
