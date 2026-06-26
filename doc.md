@@ -36,6 +36,7 @@ flowchart TB
 | `subscriptions` | OpenID、模板 ID、业务状态、一次性授权状态 | 默认 `_id` |
 | `system_state` | 最近查询、成绩通知、最新公告、发送统计 | 默认 `_id` |
 | `notice_delivery_tasks` | 成绩公告发送任务锁，避免并发重复发送 | 默认 `_id` |
+| `notice_delivery_attempts` | 每一次通知发送的汇总与用户级成功/失败明细 | `createdAt` 降序、非唯一 |
 | `check_logs` | 自动查询成功/失败记录 | `checkedAt` 降序、非唯一 |
 | `manual_check_logs` | 手动查询及一分钟限流记录 | `checkedAt` 降序、非唯一 |
 
@@ -125,9 +126,98 @@ status = subscribed 且 active = true
 }
 ```
 
-由于同一个 `_id` 只能创建一次，自动查询和手动查询即使同时发现同一条成绩公告，也只有第一个创建成功的云函数会真正发送消息。其它并发实例会把本次发送结果记为 `skipped: true`，不会重复通知用户。
+同一公告任务为 `sending` 时，自动查询、手动查询和后台重试即使同时触发，也只有拿到任务锁的云函数会真正发送消息，其它实例会把本次发送结果记为 `skipped: true`，不会重复通知用户。任务结束后，如果仍有 `active=true` 的用户，后续触发可以继续复用同一公告任务进行补发。
 
-### 2.4 查询日志
+#### `acquireDeliveryTask` 逻辑说明
+
+`acquireDeliveryTask` 的作用是“抢占当前公告的发送执行权”。自动查询、手动查询、后台重试在真正群发前都会先调用它。
+
+核心逻辑如下：
+
+1. 根据成绩公告 URL 生成固定任务 ID：
+
+```text
+taskId = sha1(notice.url)
+```
+
+同一条公告永远对应同一个 `notice_delivery_tasks` 文档。
+
+2. 优先尝试创建任务文档：
+
+```json
+{
+  "_id": "taskId",
+  "status": "sending",
+  "triggerType": "automatic/manual/admin_retry",
+  "delivery": {
+    "sent": 0,
+    "failed": 0,
+    "authFailed": 0,
+    "updateFailed": 0
+  }
+}
+```
+
+如果创建成功，说明当前云函数是第一个拿到任务锁的实例，返回：
+
+```json
+{
+  "acquired": true,
+  "status": "sending"
+}
+```
+
+随后才会真正发送订阅消息。
+
+3. 如果创建失败，说明这个公告的任务文档已经存在。此时会读取已有任务：
+
+- 如果已有任务状态仍是 `sending`，表示另一个云函数正在发送，本次直接返回 `acquired: false`，不会再发消息；
+- 如果已有任务已经是 `finished` 或 `failed`，说明上一次发送已经结束，当前云函数会尝试把任务状态重新更新为 `sending`；
+- 这个更新带条件：只有 `status != sending` 时才能成功，因此多个实例同时重试时，仍然只有一个实例能抢到锁。
+
+4. 抢锁结果由 `acquired` 表示：
+
+| 返回值 | 含义 | 后续行为 |
+| --- | --- | --- |
+| `acquired: true` | 当前实例拿到发送权 | 继续发送订阅消息 |
+| `acquired: false` | 已有任务正在发送，或抢锁失败 | 跳过发送，返回 `skipped: true` |
+
+这样可以保证：同一条公告在任意时刻最多只有一个发送任务执行，避免自动查询、手动查询和后台重试并发时重复群发。
+
+### 2.4 `notice_delivery_attempts`
+
+每一次真正开始发送都会写入一条发送明细：
+
+```json
+{
+  "_id": "任务ID_时间戳_随机串",
+  "taskId": "公告URL的SHA-1",
+  "noticeTitle": "成绩公告标题",
+  "triggerType": "automatic",
+  "status": "finished",
+  "delivery": {
+    "sent": 120,
+    "failed": 3,
+    "authFailed": 1,
+    "updateFailed": 0
+  },
+  "total": 123,
+  "results": [
+    {
+      "openid": "用户OpenID",
+      "subscriberId": "订阅记录ID",
+      "status": "success",
+      "errCode": null,
+      "errorText": ""
+    }
+  ],
+  "createdAt": "服务端时间"
+}
+```
+
+管理后台将这些记录展示为“发送流水”，用于查看每一次发送中哪些用户成功、哪些用户失败，以及失败错误码和错误信息。
+
+### 2.5 查询日志
 
 `check_logs` 只保存定时自动查询；`manual_check_logs` 只保存用户点击“立即查询”。两者均记录：
 
@@ -293,9 +383,9 @@ flowchart LR
 system_state / score_notice / latestNotice.url
 ```
 
-只有新 URL 与上次 URL 不同，才触发全量消息发送。手动查询与自动查询使用同一个去重状态，并且发送前会创建 `notice_delivery_tasks` 任务锁，所以同一公告不会因为白天每 10 分钟执行或手动/自动并发执行而重复全量发送。
+发现新 URL，或当前公告仍存在可发送的订阅用户时，会触发发送任务。手动查询、自动查询与后台重试使用同一个 `notice_delivery_tasks` 任务锁，所以同一公告不会因为白天每 10 分钟执行或手动/自动/后台并发执行而重复发送。
 
-如果同一公告上次发送时有临时或未知错误用户，系统会保留这些用户的 `active=true`，并记录 `failedNoticeUrl=当前公告URL`、`lastFailureType=temporary_or_unknown`。后续检查到同一公告时，会创建 `retry_` 开头的 10 分钟时间片补发任务，只对这些临时失败用户继续补发。
+同一公告的任务 ID 为公告 URL 的 SHA-1。任务状态为 `sending` 时，其他触发入口会跳过发送；任务结束后，如果仍有 `active=true` 的用户，后续检查或后台重试可以再次启动同一个公告任务。发送成功或授权失效用户会被置为 `active=false`；临时或未知错误用户会保留 `active=true`，并记录 `failedNoticeUrl=当前公告URL`、`lastFailureType=temporary_or_unknown`，后续继续补发。
 
 ## 9. 最新公告
 
@@ -345,13 +435,19 @@ system_state / score_notice / latestNotice.url
 - 按钮进入 `/pages/admin/admin`；
 - 管理后台通过 `getAdminStats` 云函数读取 `notice_delivery_tasks`；
 - `getAdminStats` 会在云函数内再次校验 OpenID，非管理员返回“无权限访问”；
+- 点击“发送失败”卡片中的“重试”按钮，会调用 `retryFailedNotifications`；
+- `retryFailedNotifications` 会在云函数内再次校验 OpenID；
+- 重试只针对当前成绩公告下 `active=true`、`lastFailureType=temporary_or_unknown` 的用户；
+- 授权失效用户不会重试；
+- 重试与自动/手动查询复用同一个公告发送任务锁；如果当前公告任务仍为 `sending`，重试会跳过，避免并发重复发送；
 - 页面展示：
   - 发送成功总数；
   - 发送失败总数；
   - 授权失效总数；
   - 订阅记录更新失败总数；
-  - 发送任务总数；
-  - 最近 20 条发送任务。
+  - 公告发送任务总数；
+  - 最近 20 条发送流水；
+  - 最近 20 条公告发送任务。
 
 ## 14. 部署核对表
 
@@ -365,5 +461,6 @@ system_state / score_notice / latestNotice.url
 - [ ] 已部署 `checkNotification`；
 - [ ] 已部署 `getCheckRecords`；
 - [ ] 已部署 `getAdminStats`；
+- [ ] 已部署 `retryFailedNotifications`；
 - [ ] 定时触发器为 `0 */10 8-20 * * * *`；
 - [ ] 已编译并上传前端。

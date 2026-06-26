@@ -10,6 +10,7 @@ const SOURCE_URLS = [
   'https://www.ruankao.org.cn/index/work.html'
 ]
 const DELIVERY_TASK_COLLECTION = 'notice_delivery_tasks'
+const DELIVERY_ATTEMPT_COLLECTION = 'notice_delivery_attempts'
 
 async function appendAutomaticCheckLog(data) {
   try {
@@ -119,9 +120,8 @@ function deliveryTaskId(notice) {
   return crypto.createHash('sha1').update(notice.url).digest('hex')
 }
 
-function retryDeliveryTaskId(notice) {
-  const tenMinuteBucket = Math.floor(Date.now() / (10 * 60 * 1000))
-  return `retry_${crypto.createHash('sha1').update(`${notice.url}:${tenMinuteBucket}`).digest('hex')}`
+function deliveryAttemptId(taskId) {
+  return `${taskId}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`
 }
 
 function errorText(error) {
@@ -150,6 +150,19 @@ function chunkArray(items, size) {
     chunks.push(items.slice(index, index + size))
   }
   return chunks
+}
+
+function emptyDelivery() {
+  return { sent: 0, failed: 0, authFailed: 0, updateFailed: 0 }
+}
+
+function mergeDelivery(base, extra) {
+  return {
+    sent: Number((base && base.sent) || 0) + Number((extra && extra.sent) || 0),
+    failed: Number((base && base.failed) || 0) + Number((extra && extra.failed) || 0),
+    authFailed: Number((base && base.authFailed) || 0) + Number((extra && extra.authFailed) || 0),
+    updateFailed: Number((base && base.updateFailed) || 0) + Number((extra && extra.updateFailed) || 0)
+  }
 }
 
 function groupSendResults(results, keyOf) {
@@ -244,7 +257,7 @@ async function flushSendResults(notice, results) {
 }
 
 async function acquireDeliveryTask(notice, triggerType) {
-  const taskId = triggerType === 'retry' ? retryDeliveryTaskId(notice) : deliveryTaskId(notice)
+  const taskId = deliveryTaskId(notice)
   try {
     await db.collection(DELIVERY_TASK_COLLECTION).add({
       data: {
@@ -253,21 +266,37 @@ async function acquireDeliveryTask(notice, triggerType) {
         noticeTitle: notice.title,
         noticeDate: notice.date,
         triggerType,
-        parentTaskId: triggerType === 'retry' ? deliveryTaskId(notice) : '',
+        delivery: emptyDelivery(),
         status: 'sending',
         createdAt: db.serverDate(),
         updatedAt: db.serverDate()
       }
     })
-    return { acquired: true, taskId }
+    return { acquired: true, taskId, status: 'sending', delivery: emptyDelivery() }
   } catch (error) {
     const existing = await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get().catch(() => null)
     if (!existing || !existing.data) throw error
+    if (existing.data.status === 'sending') {
+      return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery(), error: errorText(error) }
+    }
+    const lockResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
+      _id: taskId,
+      status: _.neq('sending')
+    }).update({
+      data: {
+        triggerType,
+        status: 'sending',
+        error: '',
+        updatedAt: db.serverDate()
+      }
+    })
+    const locked = lockResult && lockResult.stats && lockResult.stats.updated > 0
     return {
-      acquired: false,
+      acquired: locked,
       taskId,
-      status: existing && existing.data && existing.data.status,
-      error: errorText(error)
+      status: locked ? 'sending' : (existing.data.status || 'unknown'),
+      delivery: existing.data.delivery || emptyDelivery(),
+      error: locked ? '' : 'delivery_task_already_sending'
     }
   }
 }
@@ -286,6 +315,33 @@ async function finishDeliveryTask(taskId, status, delivery, error) {
   })
 }
 
+async function recordDeliveryAttempt(taskId, attemptId, notice, triggerType, status, delivery, results, error) {
+  await db.collection(DELIVERY_ATTEMPT_COLLECTION).add({
+    data: {
+      _id: attemptId,
+      taskId,
+      noticeUrl: notice.url,
+      noticeTitle: notice.title,
+      noticeDate: notice.date,
+      triggerType,
+      status,
+      delivery: delivery || emptyDelivery(),
+      total: results.length,
+      results: results.map(result => ({
+        openid: result.subscriber._openid,
+        subscriberId: result.subscriber._id,
+        status: result.status,
+        errCode: result.errCode || null,
+        errorText: result.errorText || ''
+      })),
+      error: error ? errorText(error) : '',
+      createdAt: db.serverDate()
+    }
+  }).catch(recordError => {
+    console.error('写入通知发送明细失败', recordError)
+  })
+}
+
 async function migrateLegacySubscriptions() {
   while (true) {
     const { data } = await db.collection('subscriptions')
@@ -300,7 +356,7 @@ async function migrateLegacySubscriptions() {
   }
 }
 
-async function notifySubscribers(notice, extraCondition = {}) {
+async function notifySubscribers(notice, taskId, attemptId, triggerType, extraCondition = {}) {
   await migrateLegacySubscriptions()
   let sent = 0
   let failed = 0
@@ -346,23 +402,21 @@ async function notifySubscribers(notice, extraCondition = {}) {
     lastId = data[data.length - 1]._id
     if (data.length < 100) break
   }
-  updateFailed += await flushSendResults(notice, sendResults)
-  return { sent, failed, authFailed, updateFailed }
+  const delivery = { sent, failed, authFailed, updateFailed }
+  try {
+    delivery.updateFailed += await flushSendResults(notice, sendResults)
+    await recordDeliveryAttempt(taskId, attemptId, notice, triggerType, 'finished', delivery, sendResults)
+    return delivery
+  } catch (error) {
+    await recordDeliveryAttempt(taskId, attemptId, notice, triggerType, 'failed', delivery, sendResults, error)
+    throw error
+  }
 }
 
-async function retryTemporaryFailures(notice) {
-  return notifySubscribers(notice, {
-    failedNoticeUrl: notice.url,
-    lastFailureType: 'temporary_or_unknown'
-  })
-}
-
-async function hasTemporaryFailures(notice) {
+async function hasSendableSubscribers() {
   const { data } = await db.collection('subscriptions').where({
     active: true,
-    status: 'subscribed',
-    failedNoticeUrl: notice.url,
-    lastFailureType: 'temporary_or_unknown'
+    status: 'subscribed'
   }).limit(1).get()
   return data.length > 0
 }
@@ -432,34 +486,16 @@ exports.main = async () => {
     const previousUrl = previous && previous.data && previous.data.latestNotice && previous.data.latestNotice.url
     let delivery = null
 
-    if (latest && latest.url !== previousUrl) {
-      const deliveryTask = await acquireDeliveryTask(latest, isAutomatic ? 'automatic' : 'manual')
+    if (latest && (latest.url !== previousUrl || await hasSendableSubscribers())) {
+      const triggerType = isAutomatic ? 'automatic' : 'manual'
+      const deliveryTask = await acquireDeliveryTask(latest, triggerType)
       if (deliveryTask.acquired) {
+        const attemptId = deliveryAttemptId(deliveryTask.taskId)
         try {
-          delivery = await notifySubscribers(latest)
-          await finishDeliveryTask(deliveryTask.taskId, 'finished', delivery)
+          delivery = await notifySubscribers(latest, deliveryTask.taskId, attemptId, triggerType)
+          await finishDeliveryTask(deliveryTask.taskId, 'finished', mergeDelivery(deliveryTask.delivery, delivery))
         } catch (notifyError) {
-          await finishDeliveryTask(deliveryTask.taskId, 'failed', null, notifyError)
-          throw notifyError
-        }
-      } else {
-        delivery = {
-          sent: 0,
-          failed: 0,
-          skipped: true,
-          reason: 'same_notice_delivery_already_started',
-          taskId: deliveryTask.taskId,
-          status: deliveryTask.status || 'unknown'
-        }
-      }
-    } else if (latest && latest.url === previousUrl && await hasTemporaryFailures(latest)) {
-      const deliveryTask = await acquireDeliveryTask(latest, 'retry')
-      if (deliveryTask.acquired) {
-        try {
-          delivery = await retryTemporaryFailures(latest)
-          await finishDeliveryTask(deliveryTask.taskId, 'finished', delivery)
-        } catch (notifyError) {
-          await finishDeliveryTask(deliveryTask.taskId, 'failed', null, notifyError)
+          await finishDeliveryTask(deliveryTask.taskId, 'failed', deliveryTask.delivery || emptyDelivery(), notifyError)
           throw notifyError
         }
       } else {
@@ -469,7 +505,7 @@ exports.main = async () => {
           authFailed: 0,
           updateFailed: 0,
           skipped: true,
-          reason: 'same_notice_retry_already_started',
+          reason: 'notice_delivery_task_sending',
           taskId: deliveryTask.taskId,
           status: deliveryTask.status || 'unknown'
         }

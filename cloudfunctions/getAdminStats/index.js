@@ -5,6 +5,7 @@ const db = cloud.database()
 const ADMIN_OPENID = 'ouQIY0UogBHEkYzGs9A9BqP7JAL4'
 const PAGE_SIZE = 100
 const RECENT_LIMIT = 20
+const RECENT_ATTEMPT_LIMIT = 20
 
 function formatDate(value) {
   if (!value) return ''
@@ -38,6 +39,39 @@ function normalizeTask(task) {
     updateFailed: toNumber(delivery.updateFailed),
     createdAt: formatDate(task.createdAt),
     finishedAt: formatDate(task.finishedAt || task.updatedAt)
+  }
+}
+
+function maskOpenid(openid) {
+  if (!openid) return ''
+  if (openid.length <= 12) return openid
+  return `${openid.slice(0, 6)}...${openid.slice(-6)}`
+}
+
+function normalizeAttempt(attempt) {
+  const delivery = deliveryOf(attempt)
+  return {
+    _id: attempt._id,
+    taskId: attempt.taskId || '',
+    noticeTitle: attempt.noticeTitle || '',
+    noticeUrl: attempt.noticeUrl || '',
+    noticeDate: attempt.noticeDate || '',
+    triggerType: attempt.triggerType || '',
+    status: attempt.status || '',
+    total: toNumber(attempt.total),
+    sent: toNumber(delivery.sent),
+    failed: toNumber(delivery.failed),
+    authFailed: toNumber(delivery.authFailed),
+    updateFailed: toNumber(delivery.updateFailed),
+    error: attempt.error || '',
+    createdAt: formatDate(attempt.createdAt),
+    results: (attempt.results || []).map(result => ({
+      openid: maskOpenid(result.openid),
+      subscriberId: result.subscriberId || '',
+      status: result.status || '',
+      errCode: result.errCode || null,
+      errorText: result.errorText || ''
+    }))
   }
 }
 
@@ -84,9 +118,16 @@ exports.main = async () => {
     stats.totalUpdateFailed += toNumber(delivery.updateFailed)
   }
 
+  const attemptsResult = await db.collection('notice_delivery_attempts')
+    .orderBy('createdAt', 'desc')
+    .limit(RECENT_ATTEMPT_LIMIT)
+    .get()
+    .catch(() => ({ data: [] }))
+
   return {
     ok: true,
     stats,
-    recentTasks: tasks.slice(0, RECENT_LIMIT).map(normalizeTask)
+    recentTasks: tasks.slice(0, RECENT_LIMIT).map(normalizeTask),
+    recentAttempts: (attemptsResult.data || []).map(normalizeAttempt)
   }
 }

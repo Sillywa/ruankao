@@ -13,6 +13,7 @@
       <view class="stat danger">
         <view class="number">{{stats.totalFailed}}</view>
         <view class="label">发送失败</view>
+        <button class="retry-btn" wx:if="{{stats.totalFailed > 0}}" loading="{{retrying}}" disabled="{{retrying}}" bindtap="retryFailedNotifications">重试</button>
       </view>
       <view class="stat danger">
         <view class="number">{{stats.totalAuthFailed}}</view>
@@ -24,7 +25,7 @@
       </view>
       <view class="stat">
         <view class="number">{{stats.totalTasks}}</view>
-        <view class="label">发送任务</view>
+        <view class="label">公告发送任务</view>
       </view>
     </view>
     <view class="task-status">
@@ -35,8 +36,47 @@
   </view>
 
   <view class="section-head" wx:if="{{!errorMessage}}">
-    <view class="section-title">最近发送任务</view>
+    <view class="section-title">发送流水</view>
     <view class="refresh" bindtap="loadStats">刷新</view>
+  </view>
+
+  <block wx:if="{{!errorMessage}}">
+    <view class="attempt" wx:for="{{recentAttempts}}" wx:key="_id" wx:for-item="attempt">
+      <view class="task-head">
+        <view class="status {{attempt.status}}">{{attempt.status}}</view>
+        <text class="time">{{attempt.createdAt}}</text>
+      </view>
+      <view class="notice">{{attempt.noticeTitle || '未记录公告标题'}}</view>
+      <view class="meta">
+        <text>本次成功 {{attempt.sent}}</text>
+        <text>本次失败 {{attempt.failed}}</text>
+      </view>
+      <view class="meta">
+        <text>授权失效 {{attempt.authFailed}}</text>
+        <text>更新失败 {{attempt.updateFailed}}</text>
+      </view>
+      <view class="sub-meta">
+        <text>{{attempt.triggerType || 'unknown'}}</text>
+        <text>发送用户 {{attempt.total}}</text>
+      </view>
+      <view class="result-list" wx:if="{{attempt.results.length}}">
+        <view class="result-row" wx:for="{{attempt.results}}" wx:key="subscriberId" wx:for-item="result">
+          <view class="result-main">
+            <text class="result-status {{result.status}}">{{result.status}}</text>
+            <text class="openid">{{result.openid}}</text>
+          </view>
+          <view class="result-error" wx:if="{{result.errCode || result.errorText}}">
+            <text wx:if="{{result.errCode}}">错误码 {{result.errCode}}</text>
+            <text wx:if="{{result.errorText}}">{{result.errorText}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="result-error task-error" wx:if="{{attempt.error}}">{{attempt.error}}</view>
+    </view>
+  </block>
+
+  <view class="section-head" wx:if="{{!errorMessage}}">
+    <view class="section-title">公告发送任务</view>
   </view>
 
   <block wx:if="{{!errorMessage}}">
@@ -61,6 +101,6 @@
     </view>
   </block>
 
-  <view class="empty" wx:if="{{initialized && !errorMessage && !recentTasks.length}}">暂无发送任务</view>
+  <view class="empty" wx:if="{{initialized && !errorMessage && !recentTasks.length && !recentAttempts.length}}">暂无发送记录</view>
   <view class="loading" wx:if="{{loading}}">正在加载...</view>
 </view>

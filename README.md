@@ -38,6 +38,7 @@ cloudfunctions/
   checkNotification/           自动/手动查询、去重、发送、写日志
   getCheckRecords/             读取最新 30 条自动查询记录
   getAdminStats/               管理后台发送统计，仅管理员可访问
+  retryFailedNotifications/    管理后台重试临时发送失败用户，仅管理员可访问
 docs/assets/                   文档原型图
 doc.md                         详细交互与数据说明
 ```
@@ -70,6 +71,7 @@ flowchart LR
 | `subscriptions` | 用户订阅业务状态与一次性消息授权状态 | 默认 `_id` |
 | `system_state` | 最近查询结果、成绩公告、最新公告及去重 URL | 默认 `_id` |
 | `notice_delivery_tasks` | 成绩公告发送任务锁，防止自动/手动并发重复发送 | 默认 `_id` |
+| `notice_delivery_attempts` | 每一次通知发送的汇总与用户级成功/失败明细 | `createdAt` 降序、非唯一 |
 | `check_logs` | 每次自动查询的成功或失败记录 | `checkedAt` 降序、非唯一 |
 | `manual_check_logs` | 每次点击“立即查询”的记录，包括限流失败 | `checkedAt` 降序、非唯一 |
 
@@ -107,14 +109,15 @@ flowchart LR
    - `date2`：发布日期；
    - `thing3`：温馨提示。
 5. 将模板 ID 写入 `miniprogram/config.js`。如果字段名不同，同步修改 `checkNotification/index.js` 的 `messageData`。
-6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`check_logs`、`manual_check_logs` 五个集合。
-7. 为 `check_logs.checkedAt` 和 `manual_check_logs.checkedAt` 创建降序、非唯一索引。
-8. 上传并部署五个正式云函数：
+6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`notice_delivery_attempts`、`check_logs`、`manual_check_logs` 六个集合。
+7. 为 `notice_delivery_attempts.createdAt`、`check_logs.checkedAt` 和 `manual_check_logs.checkedAt` 创建降序、非唯一索引。
+8. 上传并部署六个正式云函数：
    - `subscribe`；
    - `getStatus`；
    - `checkNotification`；
    - `getCheckRecords`；
-   - `getAdminStats`。
+   - `getAdminStats`；
+   - `retryFailedNotifications`。
 9. 确认 `checkNotification` 定时触发器已启用：
 
 ```text
@@ -165,8 +168,10 @@ flowchart LR
 
 - 仅 OpenID 为 `ouQIY0UogBHEkYzGs9A9BqP7JAL4` 的用户可在首页看到“管理后台”按钮；
 - 后台云函数 `getAdminStats` 会再次校验 OpenID，非管理员无法读取；
-- 页面展示发送成功总数、发送失败总数、授权失效总数、订阅记录更新失败总数、发送任务总数；
-- 页面展示最近 20 条发送任务。
+- 页面展示发送成功总数、发送失败总数、授权失效总数、订阅记录更新失败总数、公告发送任务总数；
+- 页面展示最近 20 条发送流水，包括每次发送的成功/失败汇总和用户级结果；
+- 页面展示最近 20 条公告发送任务。
+- “发送失败”卡片提供“重试”按钮，调用 `retryFailedNotifications`，只重试当前成绩公告下临时或未知错误且仍 `active=true` 的用户；授权失效用户不会重试。
 
 ## 成绩公告匹配与去重
 
@@ -188,14 +193,15 @@ flowchart LR
 system_state / score_notice / latestNotice.url
 ```
 
-只有 URL 与上次记录不同才会触发群发。
+当发现新的成绩公告 URL，或当前公告仍存在可发送的订阅用户时，会触发发送任务。
 
 为避免自动查询和手动查询并发执行时重复群发，同一公告 URL 会先写入 `notice_delivery_tasks`：
 
 - 文档 ID 为公告 URL 的 SHA-1；
-- 只有第一个创建成功的云函数会发送订阅消息；
-- 后续并发执行会标记为跳过发送，不会重复通知用户。
-- 如果同一公告存在临时失败用户，后续检查会创建 `retry_` 开头的 10 分钟时间片补发任务，只补发这些临时失败用户。
+- 任务状态为 `sending` 时，其他自动查询、手动查询或后台重试会跳过发送，不会并发重复通知用户；
+- 任务结束后，如果同一公告仍存在 `active=true` 的订阅用户，后续检查或后台重试可以再次启动同一个公告任务；
+- 已发送成功或授权失效的用户会被置为 `active=false`，不会再次收到同一公告提醒；
+- 临时或未知错误用户保留 `active=true`，下次检查同一公告或点击后台重试时继续补发。
 
 发送失败会按错误类型分类：
 
