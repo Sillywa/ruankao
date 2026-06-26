@@ -2,7 +2,8 @@
   "pages": [
     "pages/index/index",
     "pages/records/records",
-    "pages/admin/admin"
+    "pages/admin/admin",
+    "pages/adminHelp/adminHelp"
   ],
   "window": {
     "navigationBarTitleText": "软考成绩提醒",

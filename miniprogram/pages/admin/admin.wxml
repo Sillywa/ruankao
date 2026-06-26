@@ -1,5 +1,8 @@
 <view class="page">
-  <view class="summary">仅管理员可见，用于查看成绩通知发送总体结果。</view>
+  <view class="summary">
+    <text>仅管理员可见，用于查看成绩通知发送总体结果。</text>
+    <text class="help-link" bindtap="openFieldHelp">字段说明</text>
+  </view>
 
   <view class="error-card" wx:if="{{errorMessage}}">{{errorMessage}}</view>
 
@@ -27,11 +30,16 @@
         <view class="number">{{stats.totalTasks}}</view>
         <view class="label">公告发送任务</view>
       </view>
+      <view class="stat">
+        <view class="number">{{stats.totalAttempts}}</view>
+        <view class="label">发送流水</view>
+      </view>
     </view>
     <view class="task-status">
       <text>已完成 {{stats.finishedTasks}}</text>
       <text>发送中 {{stats.sendingTasks}}</text>
       <text>异常 {{stats.failedTasks}}</text>
+      <text>超时 {{stats.timeoutTasks}}</text>
     </view>
   </view>
 

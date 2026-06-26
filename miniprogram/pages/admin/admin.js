@@ -14,6 +14,16 @@ Page({
     this.loadStats().finally(() => wx.stopPullDownRefresh())
   },
 
+  openFieldHelp() {
+    wx.navigateTo({
+      url: '/pages/adminHelp/adminHelp',
+      fail(error) {
+        console.error('打开字段说明失败', error)
+        wx.showToast({ title: '打开字段说明失败', icon: 'none' })
+      }
+    })
+  },
+
   async loadStats() {
     if (this.data.loading) return
     this.setData({ loading: true, errorMessage: '' })

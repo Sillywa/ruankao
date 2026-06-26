@@ -11,6 +11,7 @@ const SOURCE_URLS = [
 ]
 const DELIVERY_TASK_COLLECTION = 'notice_delivery_tasks'
 const DELIVERY_ATTEMPT_COLLECTION = 'notice_delivery_attempts'
+const DELIVERY_TASK_TIMEOUT_MS = 15 * 60 * 1000
 
 async function appendAutomaticCheckLog(data) {
   try {
@@ -165,6 +166,16 @@ function mergeDelivery(base, extra) {
   }
 }
 
+function timeoutCutoffDate() {
+  return new Date(Date.now() - DELIVERY_TASK_TIMEOUT_MS)
+}
+
+function isDeliveryTaskTimedOut(task) {
+  if (!task || task.status !== 'sending' || !task.updatedAt) return false
+  const updatedAt = new Date(task.updatedAt).getTime()
+  return !Number.isNaN(updatedAt) && updatedAt < Date.now() - DELIVERY_TASK_TIMEOUT_MS
+}
+
 function groupSendResults(results, keyOf) {
   const groups = new Map()
   for (const result of results) {
@@ -277,7 +288,24 @@ async function acquireDeliveryTask(notice, triggerType) {
     const existing = await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get().catch(() => null)
     if (!existing || !existing.data) throw error
     if (existing.data.status === 'sending') {
-      return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery(), error: errorText(error) }
+      if (!isDeliveryTaskTimedOut(existing.data)) {
+        return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery(), error: errorText(error) }
+      }
+      const timeoutResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
+        _id: taskId,
+        status: 'sending',
+        updatedAt: _.lt(timeoutCutoffDate())
+      }).update({
+        data: {
+          status: 'timeout',
+          error: 'delivery_task_timeout',
+          timedOutAt: db.serverDate(),
+          updatedAt: db.serverDate()
+        }
+      })
+      if (!timeoutResult || !timeoutResult.stats || timeoutResult.stats.updated <= 0) {
+        return { acquired: false, taskId, status: 'sending', delivery: existing.data.delivery || emptyDelivery(), error: 'delivery_task_timeout_lock_failed' }
+      }
     }
     const lockResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
       _id: taskId,

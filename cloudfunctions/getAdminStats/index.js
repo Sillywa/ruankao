@@ -88,6 +88,8 @@ exports.main = async () => {
     finishedTasks: 0,
     failedTasks: 0,
     sendingTasks: 0,
+    timeoutTasks: 0,
+    totalAttempts: 0,
     totalSent: 0,
     totalFailed: 0,
     totalAuthFailed: 0,
@@ -111,23 +113,37 @@ exports.main = async () => {
     if (task.status === 'finished') stats.finishedTasks += 1
     if (task.status === 'failed') stats.failedTasks += 1
     if (task.status === 'sending') stats.sendingTasks += 1
-    const delivery = deliveryOf(task)
+    if (task.status === 'timeout') stats.timeoutTasks += 1
+  }
+
+  const attemptCountResult = await db.collection('notice_delivery_attempts').count().catch(() => ({ total: 0 }))
+  const attemptTotal = attemptCountResult.total || 0
+  stats.totalAttempts = attemptTotal
+  const attemptBatches = []
+  for (let offset = 0; offset < attemptTotal; offset += PAGE_SIZE) {
+    attemptBatches.push(
+      db.collection('notice_delivery_attempts')
+        .orderBy('createdAt', 'desc')
+        .skip(offset)
+        .limit(PAGE_SIZE)
+        .get()
+    )
+  }
+
+  const attemptPages = attemptBatches.length ? await Promise.all(attemptBatches) : []
+  const attempts = attemptPages.flatMap(page => page.data || [])
+  for (const attempt of attempts) {
+    const delivery = deliveryOf(attempt)
     stats.totalSent += toNumber(delivery.sent)
     stats.totalFailed += toNumber(delivery.failed)
     stats.totalAuthFailed += toNumber(delivery.authFailed)
     stats.totalUpdateFailed += toNumber(delivery.updateFailed)
   }
 
-  const attemptsResult = await db.collection('notice_delivery_attempts')
-    .orderBy('createdAt', 'desc')
-    .limit(RECENT_ATTEMPT_LIMIT)
-    .get()
-    .catch(() => ({ data: [] }))
-
   return {
     ok: true,
     stats,
     recentTasks: tasks.slice(0, RECENT_LIMIT).map(normalizeTask),
-    recentAttempts: (attemptsResult.data || []).map(normalizeAttempt)
+    recentAttempts: attempts.slice(0, RECENT_ATTEMPT_LIMIT).map(normalizeAttempt)
   }
 }

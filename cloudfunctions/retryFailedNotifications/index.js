@@ -7,6 +7,7 @@ const _ = db.command
 const ADMIN_OPENID = 'ouQIY0UogBHEkYzGs9A9BqP7JAL4'
 const DELIVERY_TASK_COLLECTION = 'notice_delivery_tasks'
 const DELIVERY_ATTEMPT_COLLECTION = 'notice_delivery_attempts'
+const DELIVERY_TASK_TIMEOUT_MS = 15 * 60 * 1000
 
 function deliveryTaskId(notice) {
   return crypto.createHash('sha1').update(notice.url).digest('hex')
@@ -63,6 +64,16 @@ function mergeDelivery(base, extra) {
     authFailed: Number((base && base.authFailed) || 0) + Number((extra && extra.authFailed) || 0),
     updateFailed: Number((base && base.updateFailed) || 0) + Number((extra && extra.updateFailed) || 0)
   }
+}
+
+function timeoutCutoffDate() {
+  return new Date(Date.now() - DELIVERY_TASK_TIMEOUT_MS)
+}
+
+function isDeliveryTaskTimedOut(task) {
+  if (!task || task.status !== 'sending' || !task.updatedAt) return false
+  const updatedAt = new Date(task.updatedAt).getTime()
+  return !Number.isNaN(updatedAt) && updatedAt < Date.now() - DELIVERY_TASK_TIMEOUT_MS
 }
 
 function groupSendResults(results, keyOf) {
@@ -168,7 +179,24 @@ async function acquireDeliveryTask(notice) {
     const existing = await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get().catch(() => null)
     if (!existing || !existing.data) throw error
     if (existing.data.status === 'sending') {
-      return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery() }
+      if (!isDeliveryTaskTimedOut(existing.data)) {
+        return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery() }
+      }
+      const timeoutResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
+        _id: taskId,
+        status: 'sending',
+        updatedAt: _.lt(timeoutCutoffDate())
+      }).update({
+        data: {
+          status: 'timeout',
+          error: 'delivery_task_timeout',
+          timedOutAt: db.serverDate(),
+          updatedAt: db.serverDate()
+        }
+      })
+      if (!timeoutResult || !timeoutResult.stats || timeoutResult.stats.updated <= 0) {
+        return { acquired: false, taskId, status: 'sending', delivery: existing.data.delivery || emptyDelivery() }
+      }
     }
     const lockResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
       _id: taskId,

@@ -126,7 +126,7 @@ status = subscribed 且 active = true
 }
 ```
 
-同一公告任务为 `sending` 时，自动查询、手动查询和后台重试即使同时触发，也只有拿到任务锁的云函数会真正发送消息，其它实例会把本次发送结果记为 `skipped: true`，不会重复通知用户。任务结束后，如果仍有 `active=true` 的用户，后续触发可以继续复用同一公告任务进行补发。
+同一公告任务为 `sending` 时，自动查询、手动查询和后台重试即使同时触发，也只有拿到任务锁的云函数会真正发送消息，其它实例会把本次发送结果记为 `skipped: true`，不会重复通知用户。如果任务保持 `sending` 超过 15 分钟，后续触发会先把旧任务标记为 `timeout`，再重新抢锁发送。任务结束后，如果仍有 `active=true` 的用户，后续触发可以继续复用同一公告任务进行补发。
 
 #### `acquireDeliveryTask` 逻辑说明
 
@@ -171,9 +171,10 @@ taskId = sha1(notice.url)
 
 3. 如果创建失败，说明这个公告的任务文档已经存在。此时会读取已有任务：
 
-- 如果已有任务状态仍是 `sending`，表示另一个云函数正在发送，本次直接返回 `acquired: false`，不会再发消息；
-- 如果已有任务已经是 `finished` 或 `failed`，说明上一次发送已经结束，当前云函数会尝试把任务状态重新更新为 `sending`；
-- 这个更新带条件：只有 `status != sending` 时才能成功，因此多个实例同时重试时，仍然只有一个实例能抢到锁。
+- 如果已有任务状态仍是 `sending` 且 `updatedAt` 距今不超过 15 分钟，表示另一个云函数正在发送，本次直接返回 `acquired: false`，不会再发消息；
+- 如果已有任务状态仍是 `sending`，但 `updatedAt` 已经超过 15 分钟，会先条件更新为 `timeout`。只有成功把旧任务标记为 `timeout` 的实例，才继续参与后续抢锁；
+- 如果已有任务已经是 `finished`、`failed` 或 `timeout`，说明上一次发送已经结束或超时，当前云函数会尝试把任务状态重新更新为 `sending`；
+- 这个更新带条件：只有 `status != sending` 时才能成功，因此多个实例同时重试或抢断超时任务时，仍然只有一个实例能抢到锁。
 
 4. 抢锁结果由 `acquired` 表示：
 
@@ -441,21 +442,22 @@ system_state / score_notice / latestNotice.url
 - 授权失效用户不会重试；
 - 重试与自动/手动查询复用同一个公告发送任务锁；如果当前公告任务仍为 `sending`，重试会跳过，避免并发重复发送；
 - 页面展示：
-  - 发送成功总数；
-  - 发送失败总数；
-  - 授权失效总数；
-  - 订阅记录更新失败总数；
-  - 公告发送任务总数；
-  - 最近 20 条发送流水；
-  - 最近 20 条公告发送任务。
+  - 发送成功：来自 `notice_delivery_attempts.delivery.sent` 汇总，表示微信接口返回成功的发送次数；
+  - 发送失败：来自 `notice_delivery_attempts.delivery.failed` 汇总，表示微信接口返回失败的发送次数，包含授权失效和临时异常；
+  - 授权失效：来自 `notice_delivery_attempts.delivery.authFailed` 汇总，表示用户拒收、未授权或授权已不可用；
+  - 记录更新失败：来自 `notice_delivery_attempts.delivery.updateFailed` 汇总，表示消息已尝试发送，但更新订阅记录失败的数量；
+  - 公告发送任务：来自 `notice_delivery_tasks` 总数，表示按公告 URL 去重后的任务锁数量；
+  - 已完成 / 发送中 / 异常 / 超时：来自 `notice_delivery_tasks.status` 统计；
+  - 发送流水：来自 `notice_delivery_attempts`，展示最近 20 次实际发送或补发；
+  - 公告发送任务列表：来自 `notice_delivery_tasks`，展示最近 20 条公告级任务。
 
 ## 14. 部署核对表
 
 - [ ] 已配置小程序 AppID；
 - [ ] 已配置云环境 ID；
 - [ ] 已配置订阅消息模板 ID 与字段；
-- [ ] 已创建五个数据库集合；
-- [ ] 两个日志集合的 `checkedAt` 为降序、非唯一索引；
+- [ ] 已创建六个数据库集合；
+- [ ] `notice_delivery_attempts.createdAt`、两个日志集合的 `checkedAt` 为降序、非唯一索引；
 - [ ] 已部署 `subscribe`；
 - [ ] 已部署 `getStatus`；
 - [ ] 已部署 `checkNotification`；
