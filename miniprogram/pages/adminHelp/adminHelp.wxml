@@ -3,9 +3,10 @@
 
   <view class="card field-card">
     <view class="section-title">发送概览</view>
-    <view class="field-row"><text class="field-name">发送成功</text><text>所有发送流水中微信接口返回成功的次数，统计来源为 notice_delivery_attempts.delivery.sent。</text></view>
-    <view class="field-row"><text class="field-name">发送失败</text><text>所有发送流水中微信接口返回失败的次数，包含授权失效和临时异常，统计来源为 notice_delivery_attempts.delivery.failed。</text></view>
-    <view class="field-row"><text class="field-name">授权失效</text><text>用户拒收、未授权或授权已不可用。授权失效后会关闭 active，后续不会继续补发。</text></view>
+    <view class="field-row"><text class="field-name">总订阅用户数</text><text>subscriptions 集合中 status=subscribed 的用户数，包含当前仍有授权和授权已消费的订阅用户。</text></view>
+    <view class="field-row"><text class="field-name">成功用户数</text><text>按用户最后一次发送结果统计，最后一次结果为 success 的用户数。</text></view>
+    <view class="field-row"><text class="field-name">失败用户数</text><text>按用户最后一次发送结果统计，最后一次结果不为 success 的用户数。授权失效用户也包含在失败用户数内。</text></view>
+    <view class="field-row"><text class="field-name">授权失效用户数</text><text>按用户最后一次发送结果统计，最后一次结果为 authorization_invalid 的用户数。</text></view>
     <view class="field-row"><text class="field-name">记录更新失败</text><text>消息已尝试发送，但更新订阅记录时失败的数量，统计来源为 notice_delivery_attempts.delivery.updateFailed。</text></view>
     <view class="field-row"><text class="field-name">公告发送任务</text><text>按公告 URL 去重后的任务锁数量，来自 notice_delivery_tasks，用于防止并发重复发送。</text></view>
     <view class="field-row"><text class="field-name">发送流水</text><text>每一次实际发送或补发的执行记录数量，来自 notice_delivery_attempts，包含用户级成功/失败结果。</text></view>

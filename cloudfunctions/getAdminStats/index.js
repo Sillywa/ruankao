@@ -75,6 +75,10 @@ function normalizeAttempt(attempt) {
   }
 }
 
+function resultUserKey(result) {
+  return result.subscriberId || result.openid || ''
+}
+
 exports.main = async () => {
   const { OPENID } = cloud.getWXContext()
   if (OPENID !== ADMIN_OPENID) {
@@ -83,7 +87,12 @@ exports.main = async () => {
 
   const countResult = await db.collection('notice_delivery_tasks').count()
   const total = countResult.total || 0
+  const subscriberCountResult = await db.collection('subscriptions')
+    .where({ status: 'subscribed' })
+    .count()
+    .catch(() => ({ total: 0 }))
   const stats = {
+    totalSubscribers: subscriberCountResult.total || 0,
     totalTasks: total,
     finishedTasks: 0,
     failedTasks: 0,
@@ -134,10 +143,21 @@ exports.main = async () => {
   const attempts = attemptPages.flatMap(page => page.data || [])
   for (const attempt of attempts) {
     const delivery = deliveryOf(attempt)
-    stats.totalSent += toNumber(delivery.sent)
-    stats.totalFailed += toNumber(delivery.failed)
-    stats.totalAuthFailed += toNumber(delivery.authFailed)
     stats.totalUpdateFailed += toNumber(delivery.updateFailed)
+  }
+
+  const latestResultByUser = new Map()
+  for (const attempt of attempts) {
+    for (const result of attempt.results || []) {
+      const key = resultUserKey(result)
+      if (!key || latestResultByUser.has(key)) continue
+      latestResultByUser.set(key, result.status || '')
+    }
+  }
+  for (const status of latestResultByUser.values()) {
+    if (status === 'success') stats.totalSent += 1
+    if (status && status !== 'success') stats.totalFailed += 1
+    if (status === 'authorization_invalid') stats.totalAuthFailed += 1
   }
 
   return {

@@ -8,6 +8,7 @@
 .refresh { color: #2868f0; font-size: 24rpx; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18rpx; margin-top: 24rpx; }
 .stat { padding: 24rpx; border-radius: 18rpx; background: #f5f8ff; }
+.subscriber-stat { margin-top: 24rpx; }
 .stat.danger { background: #fff5f3; }
 .stat.warning { background: #fff9eb; }
 .number { color: #2868f0; font-size: 42rpx; font-weight: 800; line-height: 1.1; }
@@ -37,3 +38,23 @@
 .task-error { padding-top: 4rpx; }
 .empty, .loading { padding: 80rpx 20rpx; color: #9aa3b4; font-size: 24rpx; text-align: center; }
 .loading { padding: 30rpx 20rpx; }
+.skeleton-line { position: relative; overflow: hidden; border-radius: 10rpx; background: #edf1f6; }
+.skeleton-line::after { position: absolute; top: 0; bottom: 0; left: -100%; width: 100%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .75), transparent); content: ''; animation: skeleton-shimmer 1.35s infinite; }
+.skeleton-title { width: 32%; height: 34rpx; }
+.skeleton-stat-wide { margin-top: 28rpx; width: 100%; height: 126rpx; border-radius: 18rpx; }
+.skeleton-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18rpx; margin-top: 24rpx; }
+.skeleton-stat { padding: 24rpx; border-radius: 18rpx; background: #f5f8ff; }
+.skeleton-number { width: 46%; height: 42rpx; }
+.skeleton-label { margin-top: 16rpx; width: 62%; height: 24rpx; }
+.skeleton-status { display: flex; justify-content: space-between; gap: 18rpx; margin-top: 28rpx; }
+.skeleton-status-item { flex: 1; height: 24rpx; }
+.skeleton-section-title { width: 28%; height: 32rpx; }
+.skeleton-refresh { width: 12%; height: 24rpx; }
+.skeleton-card { min-height: 210rpx; }
+.skeleton-head { display: flex; align-items: center; justify-content: space-between; }
+.skeleton-badge { width: 110rpx; height: 42rpx; border-radius: 999rpx; }
+.skeleton-time { width: 210rpx; height: 24rpx; }
+.skeleton-notice { margin-top: 28rpx; width: 88%; height: 30rpx; }
+.skeleton-row { margin-top: 28rpx; width: 100%; height: 24rpx; }
+.skeleton-row.short { margin-top: 18rpx; width: 76%; }
+@keyframes skeleton-shimmer { from { left: -100%; } to { left: 100%; } }

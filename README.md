@@ -168,10 +168,10 @@ flowchart LR
 
 - 仅 OpenID 为 `ouQIY0UogBHEkYzGs9A9BqP7JAL4` 的用户可在首页看到“管理后台”按钮；
 - 后台云函数 `getAdminStats` 会再次校验 OpenID，非管理员无法读取；
-- 页面展示发送成功总数、发送失败总数、授权失效总数、订阅记录更新失败总数、公告发送任务总数；
+- 页面展示总订阅用户数、成功用户数、失败用户数、授权失效用户数、订阅记录更新失败总数、公告发送任务总数；
 - 页面展示最近 20 条发送流水，包括每次发送的成功/失败汇总和用户级结果；
 - 页面展示最近 20 条公告发送任务。
-- 顶部成功/失败/授权失效/记录更新失败从 `notice_delivery_attempts` 汇总；公告发送任务数量和状态从 `notice_delivery_tasks` 汇总。
+- 顶部总订阅用户数统计 `subscriptions.status=subscribed`；成功用户数、失败用户数、授权失效用户数按 `notice_delivery_attempts.results` 中每个用户最后一次发送结果统计，其中失败用户数表示最后一次结果不为 `success` 的用户数；记录更新失败从 `notice_delivery_attempts.delivery.updateFailed` 汇总；公告发送任务数量和状态从 `notice_delivery_tasks` 汇总。
 - “发送失败”卡片提供“重试”按钮，调用 `retryFailedNotifications`，只重试当前成绩公告下临时或未知错误且仍 `active=true` 的用户；授权失效用户不会重试。
 
 ## 成绩公告匹配与去重

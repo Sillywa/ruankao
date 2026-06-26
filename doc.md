@@ -31,16 +31,18 @@ flowchart TB
 
 ## 2. 数据库集合
 
-| 集合 | 主要内容 | 关键索引 |
-| --- | --- | --- |
-| `subscriptions` | OpenID、模板 ID、业务状态、一次性授权状态 | 默认 `_id` |
-| `system_state` | 最近查询、成绩通知、最新公告、发送统计 | 默认 `_id` |
-| `notice_delivery_tasks` | 成绩公告发送任务锁，避免并发重复发送 | 默认 `_id` |
-| `notice_delivery_attempts` | 每一次通知发送的汇总与用户级成功/失败明细 | `createdAt` 降序、非唯一 |
-| `check_logs` | 自动查询成功/失败记录 | `checkedAt` 降序、非唯一 |
-| `manual_check_logs` | 手动查询及一分钟限流记录 | `checkedAt` 降序、非唯一 |
+当前逻辑需要以下 6 个集合。所有集合权限建议设置为“仅云函数可读写”。
 
-集合权限建议全部设为“仅云函数可读写”。
+| 集合 | 用途 | 建议索引 |
+| --- | --- | --- |
+| `subscriptions` | 用户订阅状态、模板 ID、一次性授权状态、手动查询限流时间 | 默认 `_id`；可选 `status` 普通索引 |
+| `system_state` | 最近查询状态、最新成绩公告、最新普通公告、最近发送结果 | 默认 `_id` |
+| `notice_delivery_tasks` | 公告级发送任务锁，防止自动查询、手动查询和后台重试并发重复发送；记录 `sending/finished/failed/timeout` 状态 | 默认 `_id`；可选 `createdAt` 降序、非唯一 |
+| `notice_delivery_attempts` | 每一次实际发送或补发的流水，包含用户级成功/失败结果 | `createdAt` 降序、非唯一 |
+| `check_logs` | 自动查询记录，每 10 分钟自动查询一次写入 | `checkedAt` 降序、非唯一 |
+| `manual_check_logs` | 用户点击“立即查询”的手动查询记录，包括一分钟限流失败 | `checkedAt` 降序、非唯一 |
+
+旧的 `test_records` 或 `testNotification` 相关集合/云函数当前逻辑不再需要。
 
 ### 2.1 `subscriptions`
 
@@ -442,9 +444,10 @@ system_state / score_notice / latestNotice.url
 - 授权失效用户不会重试；
 - 重试与自动/手动查询复用同一个公告发送任务锁；如果当前公告任务仍为 `sending`，重试会跳过，避免并发重复发送；
 - 页面展示：
-  - 发送成功：来自 `notice_delivery_attempts.delivery.sent` 汇总，表示微信接口返回成功的发送次数；
-  - 发送失败：来自 `notice_delivery_attempts.delivery.failed` 汇总，表示微信接口返回失败的发送次数，包含授权失效和临时异常；
-  - 授权失效：来自 `notice_delivery_attempts.delivery.authFailed` 汇总，表示用户拒收、未授权或授权已不可用；
+  - 总订阅用户数：来自 `subscriptions.status=subscribed` 的用户数，包含当前仍有授权和授权已消费的订阅用户；
+  - 成功用户数：按 `notice_delivery_attempts.results` 中每个用户最后一次发送结果统计，最后一次结果为 `success` 的用户数；
+  - 失败用户数：按每个用户最后一次发送结果统计，最后一次结果不为 `success` 的用户数；
+  - 授权失效用户数：按每个用户最后一次发送结果统计，最后一次结果为 `authorization_invalid` 的用户数；
   - 记录更新失败：来自 `notice_delivery_attempts.delivery.updateFailed` 汇总，表示消息已尝试发送，但更新订阅记录失败的数量；
   - 公告发送任务：来自 `notice_delivery_tasks` 总数，表示按公告 URL 去重后的任务锁数量；
   - 已完成 / 发送中 / 异常 / 超时：来自 `notice_delivery_tasks.status` 统计；

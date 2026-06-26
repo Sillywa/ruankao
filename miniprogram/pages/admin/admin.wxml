@@ -6,21 +6,54 @@
 
   <view class="error-card" wx:if="{{errorMessage}}">{{errorMessage}}</view>
 
+  <block wx:if="{{loading && !initialized && !errorMessage}}">
+    <view class="card stats-card">
+      <view class="skeleton-line skeleton-title"></view>
+      <view class="skeleton-line skeleton-stat-wide"></view>
+      <view class="skeleton-grid">
+        <view class="skeleton-stat" wx:for="{{[1,2,3,4,5,6]}}" wx:key="*this">
+          <view class="skeleton-line skeleton-number"></view>
+          <view class="skeleton-line skeleton-label"></view>
+        </view>
+      </view>
+      <view class="skeleton-status">
+        <view class="skeleton-line skeleton-status-item" wx:for="{{[1,2,3,4]}}" wx:key="*this"></view>
+      </view>
+    </view>
+    <view class="section-head">
+      <view class="skeleton-line skeleton-section-title"></view>
+      <view class="skeleton-line skeleton-refresh"></view>
+    </view>
+    <view class="attempt skeleton-card" wx:for="{{[1,2]}}" wx:key="*this">
+      <view class="skeleton-head">
+        <view class="skeleton-line skeleton-badge"></view>
+        <view class="skeleton-line skeleton-time"></view>
+      </view>
+      <view class="skeleton-line skeleton-notice"></view>
+      <view class="skeleton-line skeleton-row"></view>
+      <view class="skeleton-line skeleton-row short"></view>
+    </view>
+  </block>
+
   <view class="card stats-card" wx:if="{{stats}}">
     <view class="section-title">发送概览</view>
+    <view class="stat subscriber-stat">
+      <view class="number">{{stats.totalSubscribers}}</view>
+      <view class="label">总订阅用户数</view>
+    </view>
     <view class="grid">
       <view class="stat">
         <view class="number">{{stats.totalSent}}</view>
-        <view class="label">发送成功</view>
+        <view class="label">成功用户数</view>
       </view>
       <view class="stat danger">
         <view class="number">{{stats.totalFailed}}</view>
-        <view class="label">发送失败</view>
+        <view class="label">失败用户数</view>
         <button class="retry-btn" wx:if="{{stats.totalFailed > 0}}" loading="{{retrying}}" disabled="{{retrying}}" bindtap="retryFailedNotifications">重试</button>
       </view>
       <view class="stat danger">
         <view class="number">{{stats.totalAuthFailed}}</view>
-        <view class="label">授权失效</view>
+        <view class="label">授权失效用户数</view>
       </view>
       <view class="stat warning">
         <view class="number">{{stats.totalUpdateFailed}}</view>
@@ -43,12 +76,12 @@
     </view>
   </view>
 
-  <view class="section-head" wx:if="{{!errorMessage}}">
+  <view class="section-head" wx:if="{{initialized && !errorMessage}}">
     <view class="section-title">发送流水</view>
     <view class="refresh" bindtap="loadStats">刷新</view>
   </view>
 
-  <block wx:if="{{!errorMessage}}">
+  <block wx:if="{{initialized && !errorMessage}}">
     <view class="attempt" wx:for="{{recentAttempts}}" wx:key="_id" wx:for-item="attempt">
       <view class="task-head">
         <view class="status {{attempt.status}}">{{attempt.status}}</view>
@@ -83,11 +116,11 @@
     </view>
   </block>
 
-  <view class="section-head" wx:if="{{!errorMessage}}">
+  <view class="section-head" wx:if="{{initialized && !errorMessage}}">
     <view class="section-title">公告发送任务</view>
   </view>
 
-  <block wx:if="{{!errorMessage}}">
+  <block wx:if="{{initialized && !errorMessage}}">
     <view class="task" wx:for="{{recentTasks}}" wx:key="_id">
       <view class="task-head">
         <view class="status {{item.status}}">{{item.status}}</view>
@@ -110,5 +143,5 @@
   </block>
 
   <view class="empty" wx:if="{{initialized && !errorMessage && !recentTasks.length && !recentAttempts.length}}">暂无发送记录</view>
-  <view class="loading" wx:if="{{loading}}">正在加载...</view>
+  <view class="loading" wx:if="{{loading && initialized}}">正在加载...</view>
 </view>
