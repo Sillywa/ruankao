@@ -144,6 +144,105 @@ function isAuthorizationInvalidError(error) {
   return /user refuse|not subscribe|not accept|subscribe.*expired|没有订阅|未订阅|拒绝/.test(text)
 }
 
+function chunkArray(items, size) {
+  const chunks = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function groupSendResults(results, keyOf) {
+  const groups = new Map()
+  for (const result of results) {
+    const key = keyOf(result)
+    if (!groups.has(key)) groups.set(key, { sample: result, ids: [] })
+    groups.get(key).ids.push(result.subscriber._id)
+  }
+  return [...groups.values()]
+}
+
+async function updateSubscriptionsByIds(ids, data) {
+  if (!ids.length) return 0
+  let updated = 0
+  for (const chunk of chunkArray(ids, 100)) {
+    const result = await db.collection('subscriptions').where({
+      _id: _.in(chunk)
+    }).update({ data })
+    updated += result && result.stats ? Number(result.stats.updated || 0) : 0
+  }
+  return updated
+}
+
+async function flushSendResults(notice, results) {
+  let updateFailed = 0
+  const successResults = results.filter(result => result.status === 'success')
+  const authFailedResults = results.filter(result => result.status === 'authorization_invalid')
+  const temporaryFailedResults = results.filter(result => result.status === 'temporary_or_unknown')
+
+  try {
+    const expected = successResults.length
+    const updated = await updateSubscriptionsByIds(successResults.map(result => result.subscriber._id), {
+      active: false,
+      notifiedAt: db.serverDate(),
+      noticeUrl: notice.url,
+      failedNoticeUrl: '',
+      lastFailureType: '',
+      lastError: '',
+      lastErrCode: null
+    })
+    if (updated < expected) updateFailed += expected - updated
+  } catch (error) {
+    updateFailed += successResults.length
+    console.error('批量更新发送成功订阅记录失败', {
+      count: successResults.length,
+      error: errorText(error)
+    })
+  }
+
+  const failedGroups = [
+    ...groupSendResults(authFailedResults, result => `authorization_invalid:${result.errCode}:${result.errorText}`)
+      .map(group => ({
+        ids: group.ids,
+        data: {
+          active: false,
+          failedAt: db.serverDate(),
+          failedNoticeUrl: notice.url,
+          lastError: group.sample.errorText,
+          lastErrCode: group.sample.errCode,
+          lastFailureType: 'authorization_invalid'
+        }
+      })),
+    ...groupSendResults(temporaryFailedResults, result => `temporary_or_unknown:${result.errCode}:${result.errorText}`)
+      .map(group => ({
+        ids: group.ids,
+        data: {
+          active: true,
+          failedAt: db.serverDate(),
+          failedNoticeUrl: notice.url,
+          lastError: group.sample.errorText,
+          lastErrCode: group.sample.errCode,
+          lastFailureType: 'temporary_or_unknown'
+        }
+      }))
+  ]
+
+  for (const group of failedGroups) {
+    try {
+      const updated = await updateSubscriptionsByIds(group.ids, group.data)
+      if (updated < group.ids.length) updateFailed += group.ids.length - updated
+    } catch (error) {
+      updateFailed += group.ids.length
+      console.error('批量更新发送失败订阅记录失败', {
+        count: group.ids.length,
+        error: errorText(error)
+      })
+    }
+  }
+
+  return updateFailed
+}
+
 async function acquireDeliveryTask(notice, triggerType) {
   const taskId = triggerType === 'retry' ? retryDeliveryTaskId(notice) : deliveryTaskId(notice)
   try {
@@ -207,6 +306,7 @@ async function notifySubscribers(notice, extraCondition = {}) {
   let failed = 0
   let authFailed = 0
   let updateFailed = 0
+  const sendResults = []
   let lastId = ''
   while (true) {
     const condition = {
@@ -230,66 +330,23 @@ async function notifySubscribers(notice, extraCondition = {}) {
           data: messageData(notice)
         })
         sent += 1
-        try {
-          await db.collection('subscriptions').doc(subscriber._id).update({
-            data: {
-              active: false,
-              notifiedAt: db.serverDate(),
-              noticeUrl: notice.url,
-              failedNoticeUrl: '',
-              lastFailureType: '',
-              lastError: '',
-              lastErrCode: null
-            }
-          })
-        } catch (updateError) {
-          updateFailed += 1
-          console.error('订阅消息发送成功，但更新订阅记录失败', {
-            subscriberId: subscriber._id,
-            error: errorText(updateError)
-          })
-        }
+        sendResults.push({ status: 'success', subscriber })
       } catch (error) {
         failed += 1
         const isAuthInvalid = isAuthorizationInvalidError(error)
         if (isAuthInvalid) authFailed += 1
-        try {
-          if (isAuthInvalid) {
-            await db.collection('subscriptions').doc(subscriber._id).update({
-              data: {
-                active: false,
-                failedAt: db.serverDate(),
-                failedNoticeUrl: notice.url,
-                lastError: errorText(error),
-                lastErrCode: errorCode(error),
-                lastFailureType: 'authorization_invalid'
-              }
-            })
-          } else {
-            await db.collection('subscriptions').doc(subscriber._id).update({
-              data: {
-                active: true,
-                failedAt: db.serverDate(),
-                failedNoticeUrl: notice.url,
-                lastError: errorText(error),
-                lastErrCode: errorCode(error),
-                lastFailureType: 'temporary_or_unknown'
-              }
-            })
-          }
-        } catch (updateError) {
-          updateFailed += 1
-          console.error('订阅消息发送失败，且更新失败状态失败', {
-            subscriberId: subscriber._id,
-            sendError: errorText(error),
-            updateError: errorText(updateError)
-          })
-        }
+        sendResults.push({
+          status: isAuthInvalid ? 'authorization_invalid' : 'temporary_or_unknown',
+          subscriber,
+          errorText: errorText(error),
+          errCode: errorCode(error)
+        })
       }
     }
     lastId = data[data.length - 1]._id
     if (data.length < 100) break
   }
+  updateFailed += await flushSendResults(notice, sendResults)
   return { sent, failed, authFailed, updateFailed }
 }
 
