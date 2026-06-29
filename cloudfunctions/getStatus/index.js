@@ -21,7 +21,7 @@ exports.main = async () => {
   ])
   const status = state && state.data
   const subscriptionStatus = subscription && subscription.data
-    ? (subscription.data.status || 'subscribed')
+    ? subscription.data.status
     : ''
   return {
     ok: true,
