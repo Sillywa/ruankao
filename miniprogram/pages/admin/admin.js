@@ -5,7 +5,8 @@ Page({
     recentAttempts: [],
     errorMessage: '',
     loading: false,
-    retrying: false,
+    refreshing: false,
+    checking: false,
     initialized: false
   },
 
@@ -24,9 +25,50 @@ Page({
     })
   },
 
-  async loadStats() {
-    if (this.data.loading) return
-    this.setData({ loading: true, errorMessage: '' })
+  refreshStats() {
+    if (this.data.refreshing) return
+    wx.showLoading({ title: '正在刷新', mask: true })
+    return this.loadStats({ showPageLoading: false })
+      .finally(() => wx.hideLoading())
+  },
+
+  async checkNotificationNow() {
+    if (this.data.checking) return
+    this.setData({ checking: true })
+    wx.showLoading({ title: '正在检查', mask: true })
+    try {
+      const { result } = await wx.cloud.callFunction({
+        name: 'checkNotification',
+        data: { action: 'adminCheck' }
+      })
+      if (!result || !result.ok) throw new Error((result && result.message) || '检查失败')
+      await this.loadStats({ showPageLoading: false })
+      wx.hideLoading()
+      const delivery = result.delivery || {}
+      const queued = Number(delivery.queued || 0)
+      wx.showToast({
+        title: queued > 0 ? `已入队${queued}人` : '检查完成',
+        icon: 'none',
+        duration: 2500
+      })
+    } catch (error) {
+      console.error('立即检查失败', error)
+      wx.hideLoading()
+      wx.showToast({ title: error.message || '检查失败', icon: 'none' })
+    } finally {
+      this.setData({ checking: false })
+    }
+  },
+
+  async loadStats(options = {}) {
+    const showPageLoading = options.showPageLoading !== false
+    if (showPageLoading) {
+      if (this.data.loading) return
+      this.setData({ loading: true, errorMessage: '' })
+    } else {
+      if (this.data.refreshing) return
+      this.setData({ refreshing: true, errorMessage: '' })
+    }
     try {
       const { result } = await wx.cloud.callFunction({ name: 'getAdminStats' })
       if (!result || !result.ok) throw new Error((result && result.message) || '读取失败')
@@ -41,42 +83,13 @@ Page({
       wx.showToast({ title: error.message || '读取失败', icon: 'none' })
       this.setData({ initialized: true, stats: null, recentTasks: [], recentAttempts: [], errorMessage: error.message || '读取失败' })
     } finally {
-      this.setData({ loading: false })
+      if (showPageLoading) {
+        this.setData({ loading: false })
+      } else {
+        this.setData({ refreshing: false })
+      }
     }
   },
 
-  async retryFailedNotifications() {
-    if (this.data.retrying) return
-    const confirmed = await new Promise(resolve => {
-      wx.showModal({
-        title: '确认重试发送？',
-        content: '将立即给当前成绩公告下临时发送失败且仍可通知的用户重发提醒。授权失效用户不会重发。',
-        confirmText: '立即重试',
-        success: result => resolve(result.confirm),
-        fail: () => resolve(false)
-      })
-    })
-    if (!confirmed) return
-
-    this.setData({ retrying: true })
-    wx.showLoading({ title: '正在重试', mask: true })
-    try {
-      const { result } = await wx.cloud.callFunction({ name: 'retryFailedNotifications' })
-      if (!result || !result.ok) throw new Error((result && result.message) || '重试失败')
-      await this.loadStats()
-      wx.hideLoading()
-      const delivery = result.delivery || {}
-      wx.showToast({
-        title: result.skipped ? '已有重试任务' : `成功${delivery.sent || 0} 失败${delivery.failed || 0}`,
-        icon: 'none',
-        duration: 2500
-      })
-    } catch (error) {
-      console.error('重试发送失败', error)
-      wx.hideLoading()
-      wx.showToast({ title: error.message || '重试失败', icon: 'none' })
-    } finally {
-      this.setData({ retrying: false })
-    }
-  }
+  
 })

@@ -14,19 +14,19 @@
     </view>
     <block wx:else>
       <view class="status-head">
-        <view class="status-dot {{latestNotice ? 'published' : (subscribed ? 'active' : '')}}"></view>
-        <view class="status-title">{{latestNotice ? '成绩已发布' : (subscribed ? '提醒已订阅' : '尚未订阅提醒')}}</view>
+        <view class="status-dot {{latestNotice && subscribed ? 'published' : (subscribed ? 'active' : '')}}"></view>
+        <view class="status-title">{{latestNotice && subscribed ? '成绩已发布' : (subscribed ? '提醒已订阅' : '尚未订阅提醒')}}</view>
       </view>
-      <view class="status-text published-text" wx:if="{{latestNotice}}">已查询到本年度最新成绩查询公告，现在可以前往软考官网查询考试成绩。</view>
+      <view class="status-text published-text" wx:if="{{latestNotice && subscribed}}">已查询到本年度最新成绩查询公告，现在可以前往软考官网查询考试成绩。</view>
       <view class="status-text" wx:elif="{{subscribed}}">你已完成订阅，可以随时立即查询最新通知。</view>
       <view class="status-text" wx:else>点击下方按钮，授权接收一次成绩公布提醒。</view>
 
-      <button class="score-btn" wx:if="{{latestNotice}}" bindtap="openScoreQuery">立即前往</button>
+      <button class="score-btn" wx:if="{{latestNotice && subscribed}}" bindtap="openScoreQuery">立即前往</button>
 
-      <button class="subscribe-btn" wx:if="{{!latestNotice}}" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
+      <button class="subscribe-btn" wx:if="{{!latestNotice || !subscribed}}" loading="{{submitting}}" disabled="{{submitting}}" bindtap="handlePrimaryAction">
         {{subscribed ? '立即查询' : '订阅成绩提醒'}}
       </button>
-      <view class="hint" wx:if="{{!latestNotice && !subscribed}}">点击按钮授权接收成绩公布提醒。</view>
+      <view class="hint" wx:if="{{!subscribed}}">点击按钮授权接收成绩公布提醒。</view>
       <view class="hint" wx:elif="{{!latestNotice}}">系统每天 08:00–20:59 每 10 分钟自动查询；手动查询结果也会立即显示在下方。</view>
     </block>
   </view>

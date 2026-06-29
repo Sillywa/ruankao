@@ -49,36 +49,42 @@
       <view class="stat danger">
         <view class="number">{{stats.totalFailed}}</view>
         <view class="label">失败用户数</view>
-        <button class="retry-btn" wx:if="{{stats.totalFailed > 0}}" loading="{{retrying}}" disabled="{{retrying}}" bindtap="retryFailedNotifications">重试</button>
       </view>
       <view class="stat danger">
         <view class="number">{{stats.totalAuthFailed}}</view>
         <view class="label">授权失效用户数</view>
-      </view>
-      <view class="stat warning">
-        <view class="number">{{stats.totalUpdateFailed}}</view>
-        <view class="label">记录更新失败</view>
-      </view>
-      <view class="stat">
-        <view class="number">{{stats.totalTasks}}</view>
-        <view class="label">公告发送任务</view>
       </view>
       <view class="stat">
         <view class="number">{{stats.totalAttempts}}</view>
         <view class="label">发送流水</view>
       </view>
     </view>
-    <view class="task-status">
-      <text>已完成 {{stats.finishedTasks}}</text>
-      <text>发送中 {{stats.sendingTasks}}</text>
-      <text>异常 {{stats.failedTasks}}</text>
-      <text>超时 {{stats.timeoutTasks}}</text>
+    <view class="status-block">
+      <view class="status-title">任务概览</view>
+      <view class="task-status">
+        <text>已完成 {{stats.finishedTasks}}</text>
+        <text>发送中 {{stats.sendingTasks}}</text>
+        <text>异常 {{stats.failedTasks}}</text>
+        <text>超时 {{stats.timeoutTasks}}</text>
+      </view>
+    </view>
+    <view class="status-block">
+      <view class="status-title">发送队列概览</view>
+      <view class="queue-status">
+        <text>队列 {{stats.queueTotal}}</text>
+        <text>待发送 {{stats.queuePending}}</text>
+        <text>处理中 {{stats.queueProcessing}}</text>
+        <text>异常残留 {{stats.queueDone}}</text>
+      </view>
+    </view>
+    <view class="admin-actions">
+      <button class="check-primary-btn" loading="{{checking}}" disabled="{{checking || refreshing}}" bindtap="checkNotificationNow">立即检查</button>
+      <button class="refresh-primary-btn" loading="{{refreshing}}" disabled="{{refreshing || checking}}" bindtap="refreshStats">刷新全部状态</button>
     </view>
   </view>
 
   <view class="section-head" wx:if="{{initialized && !errorMessage}}">
     <view class="section-title">发送流水</view>
-    <view class="refresh" bindtap="loadStats">刷新</view>
   </view>
 
   <block wx:if="{{initialized && !errorMessage}}">
@@ -128,11 +134,14 @@
       </view>
       <view class="notice">{{item.noticeTitle || '未记录公告标题'}}</view>
       <view class="meta">
+        <text>入队 {{item.queued}}</text>
         <text>成功 {{item.sent}}</text>
-        <text>失败 {{item.failed}}</text>
       </view>
       <view class="meta">
+        <text>失败 {{item.failed}}</text>
         <text>授权失效 {{item.authFailed}}</text>
+      </view>
+      <view class="meta">
         <text>更新失败 {{item.updateFailed}}</text>
       </view>
       <view class="sub-meta">

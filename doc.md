@@ -438,18 +438,14 @@ system_state / score_notice / latestNotice.url
 - 按钮进入 `/pages/admin/admin`；
 - 管理后台通过 `getAdminStats` 云函数读取 `notice_delivery_tasks`；
 - `getAdminStats` 会在云函数内再次校验 OpenID，非管理员返回“无权限访问”；
-- 点击“发送失败”卡片中的“重试”按钮，会调用 `retryFailedNotifications`；
-- `retryFailedNotifications` 会在云函数内再次校验 OpenID；
-- 重试只针对当前成绩公告下 `active=true`、`lastFailureType=temporary_or_unknown` 的用户；
-- 授权失效用户不会重试；
-- 重试与自动/手动查询复用同一个公告发送任务锁；如果当前公告任务仍为 `sending`，重试会跳过，避免并发重复发送；
+- 通知发送由 `notice_delivery_queue` 队列和 `sendNotificationBatch` 定时云函数处理；
+- 每次触发 `checkNotification` 时，只要仍有 `active=true`、`status=subscribed` 的用户，就会进入发送队列；
 - 页面展示：
   - 总订阅用户数：来自 `subscriptions.status=subscribed` 的用户数，包含当前仍有授权和授权已消费的订阅用户；
   - 成功用户数：按 `notice_delivery_attempts.results` 中每个用户最后一次发送结果统计，最后一次结果为 `success` 的用户数；
   - 失败用户数：按每个用户最后一次发送结果统计，最后一次结果不为 `success` 的用户数；
   - 授权失效用户数：按每个用户最后一次发送结果统计，最后一次结果为 `authorization_invalid` 的用户数；
-  - 记录更新失败：来自 `notice_delivery_attempts.delivery.updateFailed` 汇总，表示消息已尝试发送，但更新订阅记录失败的数量；
-  - 公告发送任务：来自 `notice_delivery_tasks` 总数，表示按公告 URL 去重后的任务锁数量；
+  - 队列状态：来自 `notice_delivery_queue`，展示待发送、处理中和异常残留数量；
   - 已完成 / 发送中 / 异常 / 超时：来自 `notice_delivery_tasks.status` 统计；
   - 发送流水：来自 `notice_delivery_attempts`，展示最近 20 次实际发送或补发；
   - 公告发送任务列表：来自 `notice_delivery_tasks`，展示最近 20 条公告级任务。
@@ -459,13 +455,14 @@ system_state / score_notice / latestNotice.url
 - [ ] 已配置小程序 AppID；
 - [ ] 已配置云环境 ID；
 - [ ] 已配置订阅消息模板 ID 与字段；
-- [ ] 已创建六个数据库集合；
+- [ ] 已创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`notice_delivery_queue`、`notice_delivery_attempts`、`check_logs`、`manual_check_logs` 七个数据库集合；
 - [ ] `notice_delivery_attempts.createdAt`、两个日志集合的 `checkedAt` 为降序、非唯一索引；
 - [ ] 已部署 `subscribe`；
 - [ ] 已部署 `getStatus`；
 - [ ] 已部署 `checkNotification`；
+- [ ] 已部署 `sendNotificationBatch`；
 - [ ] 已部署 `getCheckRecords`；
 - [ ] 已部署 `getAdminStats`；
-- [ ] 已部署 `retryFailedNotifications`；
 - [ ] 定时触发器为 `0 */10 8-20 * * * *`；
+- [ ] `sendNotificationBatch` 定时触发器已启用；
 - [ ] 已编译并上传前端。

@@ -11,7 +11,11 @@ const SOURCE_URLS = [
 ]
 const DELIVERY_TASK_COLLECTION = 'notice_delivery_tasks'
 const DELIVERY_ATTEMPT_COLLECTION = 'notice_delivery_attempts'
+const DELIVERY_QUEUE_COLLECTION = 'notice_delivery_queue'
 const DELIVERY_TASK_TIMEOUT_MS = 15 * 60 * 1000
+const READ_PAGE_SIZE = 100
+const ADMIN_OPENID = 'ouQIY0UogBHEkYzGs9A9BqP7JAL4'
+const DB_RETRY_LIMIT = 5
 
 async function appendAutomaticCheckLog(data) {
   try {
@@ -29,6 +33,14 @@ async function appendManualCheckLog(openid, data) {
   } catch (error) {
     console.error('写入手动查询记录失败', error)
   }
+}
+
+function appendCheckLogLater(isAutomatic, openid, data) {
+  if (isAutomatic) {
+    appendAutomaticCheckLog(data)
+    return
+  }
+  appendManualCheckLog(openid, data)
 }
 
 function fetchHtml(url, redirects = 0) {
@@ -138,6 +150,34 @@ function errorCode(error) {
   return match ? Number(match[1] || match[2]) : null
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isRetriableDbError(error) {
+  const code = errorCode(error)
+  const text = errorText(error).toLowerCase()
+  return code === -501001 || /resource system error|internal server error|500/.test(text)
+}
+
+async function retryDb(operation, label) {
+  let lastError
+  for (let attempt = 1; attempt <= DB_RETRY_LIMIT; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      if (!isRetriableDbError(error) || attempt >= DB_RETRY_LIMIT) break
+      console.warn(`${label} 失败，准备重试`, {
+        attempt,
+        error: errorText(error)
+      })
+      await sleep(300 * attempt)
+    }
+  }
+  throw lastError
+}
+
 function isAuthorizationInvalidError(error) {
   const code = errorCode(error)
   if (code === 43101) return true
@@ -145,16 +185,8 @@ function isAuthorizationInvalidError(error) {
   return /user refuse|not subscribe|not accept|subscribe.*expired|没有订阅|未订阅|拒绝/.test(text)
 }
 
-function chunkArray(items, size) {
-  const chunks = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
-}
-
 function emptyDelivery() {
-  return { sent: 0, failed: 0, authFailed: 0, updateFailed: 0 }
+  return { queued: 0, sent: 0, failed: 0, authFailed: 0, updateFailed: 0 }
 }
 
 function mergeDelivery(base, extra) {
@@ -176,101 +208,10 @@ function isDeliveryTaskTimedOut(task) {
   return !Number.isNaN(updatedAt) && updatedAt < Date.now() - DELIVERY_TASK_TIMEOUT_MS
 }
 
-function groupSendResults(results, keyOf) {
-  const groups = new Map()
-  for (const result of results) {
-    const key = keyOf(result)
-    if (!groups.has(key)) groups.set(key, { sample: result, ids: [] })
-    groups.get(key).ids.push(result.subscriber._id)
-  }
-  return [...groups.values()]
-}
-
-async function updateSubscriptionsByIds(ids, data) {
-  if (!ids.length) return 0
-  let updated = 0
-  for (const chunk of chunkArray(ids, 100)) {
-    const result = await db.collection('subscriptions').where({
-      _id: _.in(chunk)
-    }).update({ data })
-    updated += result && result.stats ? Number(result.stats.updated || 0) : 0
-  }
-  return updated
-}
-
-async function flushSendResults(notice, results) {
-  let updateFailed = 0
-  const successResults = results.filter(result => result.status === 'success')
-  const authFailedResults = results.filter(result => result.status === 'authorization_invalid')
-  const temporaryFailedResults = results.filter(result => result.status === 'temporary_or_unknown')
-
-  try {
-    const expected = successResults.length
-    const updated = await updateSubscriptionsByIds(successResults.map(result => result.subscriber._id), {
-      active: false,
-      notifiedAt: db.serverDate(),
-      noticeUrl: notice.url,
-      failedNoticeUrl: '',
-      lastFailureType: '',
-      lastError: '',
-      lastErrCode: null
-    })
-    if (updated < expected) updateFailed += expected - updated
-  } catch (error) {
-    updateFailed += successResults.length
-    console.error('批量更新发送成功订阅记录失败', {
-      count: successResults.length,
-      error: errorText(error)
-    })
-  }
-
-  const failedGroups = [
-    ...groupSendResults(authFailedResults, result => `authorization_invalid:${result.errCode}:${result.errorText}`)
-      .map(group => ({
-        ids: group.ids,
-        data: {
-          active: false,
-          failedAt: db.serverDate(),
-          failedNoticeUrl: notice.url,
-          lastError: group.sample.errorText,
-          lastErrCode: group.sample.errCode,
-          lastFailureType: 'authorization_invalid'
-        }
-      })),
-    ...groupSendResults(temporaryFailedResults, result => `temporary_or_unknown:${result.errCode}:${result.errorText}`)
-      .map(group => ({
-        ids: group.ids,
-        data: {
-          active: true,
-          failedAt: db.serverDate(),
-          failedNoticeUrl: notice.url,
-          lastError: group.sample.errorText,
-          lastErrCode: group.sample.errCode,
-          lastFailureType: 'temporary_or_unknown'
-        }
-      }))
-  ]
-
-  for (const group of failedGroups) {
-    try {
-      const updated = await updateSubscriptionsByIds(group.ids, group.data)
-      if (updated < group.ids.length) updateFailed += group.ids.length - updated
-    } catch (error) {
-      updateFailed += group.ids.length
-      console.error('批量更新发送失败订阅记录失败', {
-        count: group.ids.length,
-        error: errorText(error)
-      })
-    }
-  }
-
-  return updateFailed
-}
-
 async function acquireDeliveryTask(notice, triggerType) {
   const taskId = deliveryTaskId(notice)
   try {
-    await db.collection(DELIVERY_TASK_COLLECTION).add({
+    await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).add({
       data: {
         _id: taskId,
         noticeUrl: notice.url,
@@ -282,16 +223,16 @@ async function acquireDeliveryTask(notice, triggerType) {
         createdAt: db.serverDate(),
         updatedAt: db.serverDate()
       }
-    })
+    }), '创建通知发送任务')
     return { acquired: true, taskId, status: 'sending', delivery: emptyDelivery() }
   } catch (error) {
-    const existing = await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get().catch(() => null)
+    const existing = await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get(), '读取通知发送任务').catch(() => null)
     if (!existing || !existing.data) throw error
     if (existing.data.status === 'sending') {
       if (!isDeliveryTaskTimedOut(existing.data)) {
         return { acquired: false, taskId, status: existing.data.status, delivery: existing.data.delivery || emptyDelivery(), error: errorText(error) }
       }
-      const timeoutResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
+      const timeoutResult = await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).where({
         _id: taskId,
         status: 'sending',
         updatedAt: _.lt(timeoutCutoffDate())
@@ -302,12 +243,12 @@ async function acquireDeliveryTask(notice, triggerType) {
           timedOutAt: db.serverDate(),
           updatedAt: db.serverDate()
         }
-      })
+      }), '标记超时通知发送任务')
       if (!timeoutResult || !timeoutResult.stats || timeoutResult.stats.updated <= 0) {
         return { acquired: false, taskId, status: 'sending', delivery: existing.data.delivery || emptyDelivery(), error: 'delivery_task_timeout_lock_failed' }
       }
     }
-    const lockResult = await db.collection(DELIVERY_TASK_COLLECTION).where({
+    const lockResult = await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).where({
       _id: taskId,
       status: _.neq('sending')
     }).update({
@@ -317,7 +258,7 @@ async function acquireDeliveryTask(notice, triggerType) {
         error: '',
         updatedAt: db.serverDate()
       }
-    })
+    }), '锁定通知发送任务')
     const locked = lockResult && lockResult.stats && lockResult.stats.updated > 0
     return {
       acquired: locked,
@@ -330,21 +271,48 @@ async function acquireDeliveryTask(notice, triggerType) {
 }
 
 async function finishDeliveryTask(taskId, status, delivery, error) {
-  await db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).update({
-    data: {
-      status,
-      delivery: delivery || null,
-      error: error ? errorText(error) : '',
-      updatedAt: db.serverDate(),
-      finishedAt: db.serverDate()
-    }
-  }).catch(updateError => {
+  const data = {
+    status,
+    delivery: delivery || null,
+    error: error ? errorText(error) : '',
+    updatedAt: db.serverDate(),
+    finishedAt: db.serverDate()
+  }
+  await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).update({
+    data
+  }), '更新通知发送任务').catch(async updateError => {
     console.error('更新通知发送任务失败', updateError)
+    const existing = await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).get(), '读取兜底通知发送任务')
+      .catch(readError => {
+        console.error('读取兜底通知发送任务失败', readError)
+        return null
+      })
+    const { _id, ...existingData } = (existing && existing.data) || {}
+    const mergedData = {
+      ...existingData,
+      ...data
+    }
+    await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).set({
+      data: mergedData
+    }), '兜底写入通知发送任务').catch(setError => {
+      console.error('兜底写入通知发送任务失败', setError)
+    })
+  })
+}
+
+async function updateDeliveryTaskProgress(taskId, delivery) {
+  await retryDb(() => db.collection(DELIVERY_TASK_COLLECTION).doc(taskId).update({
+    data: {
+      delivery: delivery || emptyDelivery(),
+      updatedAt: db.serverDate()
+    }
+  }), '更新通知发送任务进度').catch(updateError => {
+    console.error('更新通知发送任务进度失败', updateError)
   })
 }
 
 async function recordDeliveryAttempt(taskId, attemptId, notice, triggerType, status, delivery, results, error) {
-  await db.collection(DELIVERY_ATTEMPT_COLLECTION).add({
+  await retryDb(() => db.collection(DELIVERY_ATTEMPT_COLLECTION).add({
     data: {
       _id: attemptId,
       taskId,
@@ -365,32 +333,33 @@ async function recordDeliveryAttempt(taskId, attemptId, notice, triggerType, sta
       error: error ? errorText(error) : '',
       createdAt: db.serverDate()
     }
-  }).catch(recordError => {
+  }), '写入通知发送明细').catch(recordError => {
     console.error('写入通知发送明细失败', recordError)
   })
 }
 
-async function migrateLegacySubscriptions() {
-  while (true) {
-    const { data } = await db.collection('subscriptions')
-      .where({ status: _.exists(false) })
-      .limit(100)
-      .get()
-    if (!data.length) break
-    await Promise.all(data.map(item => db.collection('subscriptions').doc(item._id).update({
-      data: { status: 'subscribed' }
-    })))
-    if (data.length < 100) break
+async function updateScoreNoticeState(data) {
+  try {
+    await retryDb(() => db.collection('system_state').doc('score_notice').set({ data }), '写入成绩通知状态')
+  } catch (error) {
+    console.error('写入成绩通知状态失败', error)
   }
 }
 
-async function notifySubscribers(notice, taskId, attemptId, triggerType, extraCondition = {}) {
-  await migrateLegacySubscriptions()
-  let sent = 0
-  let failed = 0
-  let authFailed = 0
-  let updateFailed = 0
-  const sendResults = []
+async function updateScoreNoticeError(data) {
+  try {
+    await retryDb(() => db.collection('system_state').doc('score_notice').update({ data }), '更新成绩通知错误状态')
+  } catch (error) {
+    try {
+      await retryDb(() => db.collection('system_state').doc('score_notice').set({ data }), '兜底写入成绩通知错误状态')
+    } catch (setError) {
+      console.error('写入成绩通知错误状态失败', setError)
+    }
+  }
+}
+
+async function enqueueSubscribers(notice, taskId, triggerType, extraCondition = {}) {
+  const delivery = emptyDelivery()
   let lastId = ''
   while (true) {
     const condition = {
@@ -399,65 +368,191 @@ async function notifySubscribers(notice, taskId, attemptId, triggerType, extraCo
       ...extraCondition,
       ...(lastId ? { _id: _.gt(lastId) } : {})
     }
-    const query = db.collection('subscriptions').where(condition)
-    const { data } = await query.orderBy('_id', 'asc').limit(100).get()
+    const { data } = await retryDb(() => db.collection('subscriptions')
+      .where(condition)
+      .orderBy('_id', 'asc')
+      .limit(READ_PAGE_SIZE)
+      .get(), '读取待入队订阅用户')
+      .catch(error => {
+        console.error('读取待入队订阅用户失败，停止继续查询', error)
+        return { data: [] }
+      })
     if (!data.length) break
 
     for (const subscriber of data) {
+      lastId = subscriber._id
       try {
-        await cloud.openapi.subscribeMessage.send({
-          touser: subscriber._openid,
-          templateId: subscriber.templateId,
-          page: 'pages/index/index',
-          miniprogramState: 'formal',
-          lang: 'zh_CN',
-          data: messageData(notice)
-        })
-        sent += 1
-        sendResults.push({ status: 'success', subscriber })
+        await retryDb(() => db.collection(DELIVERY_QUEUE_COLLECTION).add({
+          data: {
+            _id: `${taskId}_${subscriber._id}`,
+            taskId,
+            noticeUrl: notice.url,
+            noticeTitle: notice.title,
+            noticeDate: notice.date,
+            triggerType,
+            subscriberId: subscriber._id,
+            openid: subscriber._openid,
+            templateId: subscriber.templateId,
+            status: 'pending',
+            attempts: 0,
+            createdAt: db.serverDate(),
+            updatedAt: db.serverDate()
+          }
+        }), '创建通知发送队列')
+        delivery.queued += 1
       } catch (error) {
-        failed += 1
-        const isAuthInvalid = isAuthorizationInvalidError(error)
-        if (isAuthInvalid) authFailed += 1
-        sendResults.push({
-          status: isAuthInvalid ? 'authorization_invalid' : 'temporary_or_unknown',
-          subscriber,
-          errorText: errorText(error),
-          errCode: errorCode(error)
+        delivery.updateFailed += 1
+        console.error('创建通知发送队列失败，继续处理下一个用户', {
+          subscriberId: subscriber._id,
+          error: errorText(error)
         })
       }
     }
-    lastId = data[data.length - 1]._id
-    if (data.length < 100) break
+    await updateDeliveryTaskProgress(taskId, delivery)
+    if (data.length < READ_PAGE_SIZE) break
   }
-  const delivery = { sent, failed, authFailed, updateFailed }
+  return delivery
+}
+
+async function sendToSubscriber(subscriber, notice) {
   try {
-    delivery.updateFailed += await flushSendResults(notice, sendResults)
-    await recordDeliveryAttempt(taskId, attemptId, notice, triggerType, 'finished', delivery, sendResults)
-    return delivery
+    await cloud.openapi.subscribeMessage.send({
+      touser: subscriber._openid,
+      templateId: subscriber.templateId,
+      page: 'pages/index/index',
+      miniprogramState: 'formal',
+      lang: 'zh_CN',
+      data: messageData(notice)
+    })
+    return { status: 'success', subscriber }
   } catch (error) {
-    await recordDeliveryAttempt(taskId, attemptId, notice, triggerType, 'failed', delivery, sendResults, error)
-    throw error
+    const isAuthInvalid = isAuthorizationInvalidError(error)
+    return {
+      status: isAuthInvalid ? 'authorization_invalid' : 'temporary_or_unknown',
+      subscriber,
+      errorText: errorText(error),
+      errCode: errorCode(error)
+    }
   }
+}
+
+function addResultToDelivery(delivery, result) {
+  if (result.status === 'success') {
+    delivery.sent += 1
+    return
+  }
+  delivery.failed += 1
+  if (result.status === 'authorization_invalid') delivery.authFailed += 1
+}
+
+async function updateSubscriptionAfterSend(notice, result) {
+  const subscriberId = result && result.subscriber && result.subscriber._id
+  if (!subscriberId) return false
+
+  let data
+  if (result.status === 'success') {
+    data = {
+      active: false,
+      notifiedAt: db.serverDate(),
+      noticeUrl: notice.url,
+      failedNoticeUrl: '',
+      lastFailureType: '',
+      lastError: '',
+      lastErrCode: null
+    }
+  } else if (result.status === 'authorization_invalid') {
+    data = {
+      active: true,
+      failedAt: db.serverDate(),
+      failedNoticeUrl: notice.url,
+      lastError: result.errorText || '',
+      lastErrCode: result.errCode || null,
+      lastFailureType: 'authorization_invalid'
+    }
+  } else {
+    data = {
+      active: true,
+      failedAt: db.serverDate(),
+      failedNoticeUrl: notice.url,
+      lastError: result.errorText || '',
+      lastErrCode: result.errCode || null,
+      lastFailureType: 'temporary_or_unknown'
+    }
+  }
+
+  try {
+    await retryDb(() => db.collection('subscriptions').doc(subscriberId).update({ data }), '更新单个订阅发送结果')
+    return true
+  } catch (error) {
+    console.error('更新单个订阅发送结果失败，继续处理下一个用户', {
+      subscriberId,
+      error: errorText(error)
+    })
+    return false
+  }
+}
+
+async function notifySubscribers(notice, taskId, attemptId, triggerType, progressBaseDelivery = emptyDelivery(), extraCondition = {}) {
+  const delivery = emptyDelivery()
+  let attemptIndex = 0
+  let lastId = ''
+  const attemptResults = []
+  while (true) {
+    const condition = {
+      active: true,
+      status: 'subscribed',
+      ...extraCondition,
+      ...(lastId ? { _id: _.gt(lastId) } : {})
+    }
+    const query = db.collection('subscriptions').where(condition)
+    const { data } = await retryDb(() => query.orderBy('_id', 'asc').limit(READ_PAGE_SIZE).get(), '读取待发送订阅用户')
+    if (!data.length) break
+    for (const subscriber of data) {
+      lastId = subscriber._id
+      attemptIndex += 1
+      const result = await sendToSubscriber(subscriber, notice)
+      addResultToDelivery(delivery, result)
+
+      const updated = await updateSubscriptionAfterSend(notice, result)
+      if (!updated) {
+        delivery.updateFailed += 1
+      }
+
+      attemptResults.push(result)
+      if (attemptIndex % PROGRESS_UPDATE_INTERVAL === 0) {
+        await updateDeliveryTaskProgress(taskId, mergeDelivery(progressBaseDelivery, delivery))
+      }
+    }
+    if (data.length < READ_PAGE_SIZE) break
+  }
+
+  if (attemptResults.length) {
+    await recordDeliveryAttempt(taskId, attemptId, notice, triggerType, 'finished', delivery, attemptResults)
+  }
+  return delivery
 }
 
 async function hasSendableSubscribers() {
-  const { data } = await db.collection('subscriptions').where({
+  const { data } = await retryDb(() => db.collection('subscriptions').where({
     active: true,
     status: 'subscribed'
-  }).limit(1).get()
+  }).limit(1).get(), '读取可发送订阅用户')
   return data.length > 0
 }
 
-exports.main = async () => {
+exports.main = async (event = {}) => {
   const { OPENID } = cloud.getWXContext()
+  const isAdminCheck = event && event.action === 'adminCheck'
   const isAutomatic = !OPENID
   const startedAt = Date.now()
+  if (isAdminCheck && OPENID !== ADMIN_OPENID) {
+    return { ok: false, message: '无权限访问' }
+  }
   // 有 OPENID 表示由小程序手动调用；定时触发器没有用户 OPENID。
-  if (OPENID) {
-    const subscriber = await db.collection('subscriptions').doc(OPENID).get().catch(() => null)
+  if (OPENID && !isAdminCheck) {
+    const subscriber = await retryDb(() => db.collection('subscriptions').doc(OPENID).get(), '读取手动查询订阅用户').catch(() => null)
     if (!subscriber || !subscriber.data) {
-      await appendManualCheckLog(OPENID, {
+      appendCheckLogLater(false, OPENID, {
         success: false,
         found: false,
         latestNotice: null,
@@ -471,7 +566,7 @@ exports.main = async () => {
 
     const lastManualCheckAt = subscriber.data.lastManualCheckAt
     if (lastManualCheckAt && Date.now() - new Date(lastManualCheckAt).getTime() < 60000) {
-      await appendManualCheckLog(OPENID, {
+      appendCheckLogLater(false, OPENID, {
         success: false,
         found: false,
         latestNotice: null,
@@ -483,11 +578,11 @@ exports.main = async () => {
       return { ok: false, message: '查询太频繁，请一分钟后再试' }
     }
     try {
-      await db.collection('subscriptions').doc(OPENID).update({
+      await retryDb(() => db.collection('subscriptions').doc(OPENID).update({
         data: { lastManualCheckAt: db.serverDate() }
-      })
+      }), '更新手动查询时间')
     } catch (error) {
-      await appendManualCheckLog(OPENID, {
+      appendCheckLogLater(false, OPENID, {
         success: false,
         found: false,
         latestNotice: null,
@@ -510,21 +605,29 @@ exports.main = async () => {
     const latest = notices.sort((a, b) => b.date.localeCompare(a.date))[0] || null
     const announcements = pages.flatMap(result => result.status === 'fulfilled' ? parseAnnouncements(result.value) : [])
     const latestAnnouncement = announcements.sort((a, b) => b.date.localeCompare(a.date))[0] || null
-    const previous = await db.collection('system_state').doc('score_notice').get().catch(() => null)
-    const previousUrl = previous && previous.data && previous.data.latestNotice && previous.data.latestNotice.url
+    if (isAdminCheck && !latest) {
+      return { ok: false, message: '暂无成绩公告可检查' }
+    }
+    const previous = await retryDb(() => db.collection('system_state').doc('score_notice').get(), '读取成绩通知状态').catch(() => null)
     let delivery = null
 
-    if (latest && (latest.url !== previousUrl || await hasSendableSubscribers())) {
-      const triggerType = isAutomatic ? 'automatic' : 'manual'
+    const hasSubscribers = latest ? await hasSendableSubscribers() : false
+    if (isAdminCheck && !hasSubscribers) {
+      return { ok: false, message: '暂无可发送用户' }
+    }
+
+    if (latest && hasSubscribers) {
+      const triggerType = isAdminCheck ? 'admin_check' : (isAutomatic ? 'automatic' : 'manual')
       const deliveryTask = await acquireDeliveryTask(latest, triggerType)
       if (deliveryTask.acquired) {
         const attemptId = deliveryAttemptId(deliveryTask.taskId)
         try {
-          delivery = await notifySubscribers(latest, deliveryTask.taskId, attemptId, triggerType)
-          await finishDeliveryTask(deliveryTask.taskId, 'finished', mergeDelivery(deliveryTask.delivery, delivery))
+          delivery = await enqueueSubscribers(latest, deliveryTask.taskId, triggerType)
+          delivery.taskId = deliveryTask.taskId
+          await updateDeliveryTaskProgress(deliveryTask.taskId, mergeDelivery(deliveryTask.delivery, delivery))
         } catch (notifyError) {
+          await recordDeliveryAttempt(deliveryTask.taskId, `${attemptId}_failed`, latest, triggerType, 'failed', delivery || emptyDelivery(), [], notifyError)
           await finishDeliveryTask(deliveryTask.taskId, 'failed', deliveryTask.delivery || emptyDelivery(), notifyError)
-          throw notifyError
         }
       } else {
         delivery = {
@@ -540,63 +643,43 @@ exports.main = async () => {
       }
     }
 
-    await db.collection('system_state').doc('score_notice').set({
-      data: {
-        lastCheckedAt: db.serverDate(),
-        latestNotice: latest,
-        latestAnnouncement,
-        lastError: '',
-        lastDelivery: delivery || (previous && previous.data && previous.data.lastDelivery) || null
-      }
+    await updateScoreNoticeState({
+      lastCheckedAt: db.serverDate(),
+      latestNotice: latest,
+      latestAnnouncement,
+      lastError: '',
+      lastDelivery: delivery || (previous && previous.data && previous.data.lastDelivery) || null
     })
-    if (isAutomatic) {
-      await appendAutomaticCheckLog({
-        success: true,
-        found: Boolean(latest),
-        latestNotice: latest,
-        latestAnnouncement,
-        delivery,
-        durationMs: Date.now() - startedAt,
-        error: ''
-      })
-    } else {
-      await appendManualCheckLog(OPENID, {
-        success: true,
-        found: Boolean(latest),
-        latestNotice: latest,
-        latestAnnouncement,
-        delivery,
-        durationMs: Date.now() - startedAt,
-        error: ''
-      })
-    }
+    appendCheckLogLater(isAutomatic, OPENID, {
+      success: true,
+      found: Boolean(latest),
+      latestNotice: latest,
+      latestAnnouncement,
+      delivery,
+      durationMs: Date.now() - startedAt,
+      error: ''
+    })
     return { ok: true, found: Boolean(latest), latest, latestAnnouncement, delivery }
   } catch (error) {
     const errorState = { lastCheckedAt: db.serverDate(), lastError: String(error.message || error).slice(0, 500) }
     // 更新失败时保留上一条通知，避免网络恢复后将同一通知误判为新通知并重复发送。
-    await db.collection('system_state').doc('score_notice').update({ data: errorState })
-      .catch(() => db.collection('system_state').doc('score_notice').set({ data: errorState }))
-    if (isAutomatic) {
-      await appendAutomaticCheckLog({
-        success: false,
-        found: false,
-        latestNotice: null,
-        latestAnnouncement: null,
-        delivery: null,
-        durationMs: Date.now() - startedAt,
-        error: String(error.message || error).slice(0, 500)
-      })
-    } else {
-      await appendManualCheckLog(OPENID, {
-        success: false,
-        found: false,
-        latestNotice: null,
-        latestAnnouncement: null,
-        delivery: null,
-        durationMs: Date.now() - startedAt,
-        error: String(error.message || error).slice(0, 500)
-      })
+    await updateScoreNoticeError(errorState)
+    appendCheckLogLater(isAutomatic, OPENID, {
+      success: false,
+      found: false,
+      latestNotice: null,
+      latestAnnouncement: null,
+      delivery: null,
+      durationMs: Date.now() - startedAt,
+      error: String(error.message || error).slice(0, 500)
+    })
+    return {
+      ok: false,
+      found: false,
+      latest: null,
+      latestAnnouncement: null,
+      delivery: null,
+      message: String(error.message || error).slice(0, 500)
     }
-    throw error
   }
 }

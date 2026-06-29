@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "openapi": ["subscribeMessage.send"]
+  },
+  "triggers": [
+    {
+      "name": "send-notification-queue-every-minute",
+      "type": "timer",
+      "config": "0 */1 * * * * *"
+    }
+  ]
+}

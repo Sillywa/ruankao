@@ -36,9 +36,9 @@ cloudfunctions/
   subscribe/                   保存和更新订阅状态
   getStatus/                   读取首页状态
   checkNotification/           自动/手动查询、去重、发送、写日志
+  sendNotificationBatch/       定时消费发送队列并发送订阅通知
   getCheckRecords/             读取最新 30 条自动查询记录
   getAdminStats/               管理后台发送统计，仅管理员可访问
-  retryFailedNotifications/    管理后台重试临时发送失败用户，仅管理员可访问
 docs/assets/                   文档原型图
 doc.md                         详细交互与数据说明
 ```
@@ -109,15 +109,15 @@ flowchart LR
    - `date2`：发布日期；
    - `thing3`：温馨提示。
 5. 将模板 ID 写入 `miniprogram/config.js`。如果字段名不同，同步修改 `checkNotification/index.js` 的 `messageData`。
-6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`notice_delivery_attempts`、`check_logs`、`manual_check_logs` 六个集合。
+6. 创建 `subscriptions`、`system_state`、`notice_delivery_tasks`、`notice_delivery_queue`、`notice_delivery_attempts`、`check_logs`、`manual_check_logs` 七个集合。
 7. 为 `notice_delivery_attempts.createdAt`、`check_logs.checkedAt` 和 `manual_check_logs.checkedAt` 创建降序、非唯一索引。
 8. 上传并部署六个正式云函数：
    - `subscribe`；
    - `getStatus`；
    - `checkNotification`；
+   - `sendNotificationBatch`；
    - `getCheckRecords`；
-   - `getAdminStats`；
-   - `retryFailedNotifications`。
+   - `getAdminStats`。
 9. 确认 `checkNotification` 定时触发器已启用：
 
 ```text
@@ -172,7 +172,6 @@ flowchart LR
 - 页面展示最近 20 条发送流水，包括每次发送的成功/失败汇总和用户级结果；
 - 页面展示最近 20 条公告发送任务。
 - 顶部总订阅用户数统计 `subscriptions.status=subscribed`；成功用户数、失败用户数、授权失效用户数按 `notice_delivery_attempts.results` 中每个用户最后一次发送结果统计，其中失败用户数表示最后一次结果不为 `success` 的用户数；记录更新失败从 `notice_delivery_attempts.delivery.updateFailed` 汇总；公告发送任务数量和状态从 `notice_delivery_tasks` 汇总。
-- “发送失败”卡片提供“重试”按钮，调用 `retryFailedNotifications`，只重试当前成绩公告下临时或未知错误且仍 `active=true` 的用户；授权失效用户不会重试。
 
 ## 成绩公告匹配与去重
 
