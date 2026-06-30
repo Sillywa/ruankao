@@ -358,7 +358,7 @@ async function updateScoreNoticeError(data) {
   }
 }
 
-async function enqueueSubscribers(notice, taskId, triggerType, extraCondition = {}) {
+async function enqueueSubscribers(notice, taskId, extraCondition = {}) {
   const delivery = emptyDelivery()
   let lastId = ''
   while (true) {
@@ -386,17 +386,10 @@ async function enqueueSubscribers(notice, taskId, triggerType, extraCondition = 
           data: {
             _id: `${taskId}_${subscriber._id}`,
             taskId,
-            noticeUrl: notice.url,
-            noticeTitle: notice.title,
-            noticeDate: notice.date,
-            triggerType,
             subscriberId: subscriber._id,
             openid: subscriber._openid,
             templateId: subscriber.templateId,
-            status: 'pending',
-            attempts: 0,
-            createdAt: db.serverDate(),
-            updatedAt: db.serverDate()
+            createdAt: db.serverDate()
           }
         }), '创建通知发送队列')
         delivery.queued += 1
@@ -622,7 +615,7 @@ exports.main = async (event = {}) => {
       if (deliveryTask.acquired) {
         const attemptId = deliveryAttemptId(deliveryTask.taskId)
         try {
-          delivery = await enqueueSubscribers(latest, deliveryTask.taskId, triggerType)
+          delivery = await enqueueSubscribers(latest, deliveryTask.taskId)
           delivery.taskId = deliveryTask.taskId
           await updateDeliveryTaskProgress(deliveryTask.taskId, mergeDelivery(deliveryTask.delivery, delivery))
         } catch (notifyError) {

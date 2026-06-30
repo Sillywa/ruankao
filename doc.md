@@ -65,6 +65,7 @@ flowchart TB
 | --- | --- |
 | `status: subscribed` | 用户业务状态为订阅中 |
 | `status: cancelled` | 用户业务状态为已取消 |
+| `status: ""` | 后台重置后的未订阅态，用户可重新授权订阅 |
 | `active: true` | 当前还有可用的一次性消息授权 |
 | `active: false` | 授权已发送、授权失效，或用户已取消 |
 
@@ -445,7 +446,7 @@ system_state / score_notice / latestNotice.url
   - 成功用户数：按 `notice_delivery_attempts.results` 中每个用户最后一次发送结果统计，最后一次结果为 `success` 的用户数；
   - 失败用户数：按每个用户最后一次发送结果统计，最后一次结果不为 `success` 的用户数；
   - 授权失效用户数：按每个用户最后一次发送结果统计，最后一次结果为 `authorization_invalid` 的用户数；
-  - 队列状态：来自 `notice_delivery_queue`，展示待发送、处理中和异常残留数量；
+  - 队列状态：来自 `notice_delivery_queue`，队列中的每一项都视为待发送；
   - 已完成 / 发送中 / 异常 / 超时：来自 `notice_delivery_tasks.status` 统计；
   - 发送流水：来自 `notice_delivery_attempts`，展示最近 20 次实际发送或补发；
   - 公告发送任务列表：来自 `notice_delivery_tasks`，展示最近 20 条公告级任务。

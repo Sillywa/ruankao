@@ -55,13 +55,9 @@ async function resetActiveSubscriptions() {
   let lastId = ''
 
   while (true) {
-    const condition = {
-      status: 'subscribed',
-      active: _.neq(true),
-      ...(lastId ? { _id: _.gt(lastId) } : {})
-    }
-    const { data } = await retryDb(() => db.collection('subscriptions')
-      .where(condition)
+    const collection = db.collection('subscriptions')
+    const query = lastId ? collection.where({ _id: _.gt(lastId) }) : collection
+    const { data } = await retryDb(() => query
       .orderBy('_id', 'asc')
       .limit(RESET_BATCH_SIZE)
       .get(), '读取待重置订阅用户')
@@ -75,10 +71,11 @@ async function resetActiveSubscriptions() {
     }).update({
       data: {
         active: true,
+        status: '',
         resetActiveAt: db.serverDate(),
         updatedAt: db.serverDate()
       }
-    }), '批量重置订阅用户 active')
+    }), '批量重置订阅用户')
 
     updated += result && result.stats ? Number(result.stats.updated || 0) : 0
     if (data.length < RESET_BATCH_SIZE) break
@@ -147,7 +144,7 @@ exports.main = async (event) => {
   }
 
   if (!event.templateId) return { ok: false, message: '参数不完整' }
-  if (existing && existing.data && existing.data.status !== 'cancelled') {
+  if (existing && existing.data && existing.data.status === 'subscribed') {
     return { ok: false, message: '你已经订阅过，不能重复订阅' }
   }
   const now = db.serverDate()

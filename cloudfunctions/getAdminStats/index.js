@@ -98,10 +98,36 @@ async function markStaleSendingTasks() {
   })
 }
 
-exports.main = async () => {
+async function listAttempts(offset = 0, limit = RECENT_ATTEMPT_LIMIT) {
+  const safeOffset = Math.max(0, Number(offset || 0))
+  const safeLimit = Math.min(50, Math.max(1, Number(limit || RECENT_ATTEMPT_LIMIT)))
+  const [countResult, page] = await Promise.all([
+    db.collection('notice_delivery_attempts').count().catch(() => ({ total: 0 })),
+    db.collection('notice_delivery_attempts')
+      .orderBy('createdAt', 'desc')
+      .skip(safeOffset)
+      .limit(safeLimit)
+      .get()
+  ])
+  const total = countResult.total || 0
+  const attempts = (page.data || []).map(normalizeAttempt)
+  return {
+    attempts,
+    hasMore: safeOffset + attempts.length < total,
+    nextOffset: safeOffset + attempts.length,
+    total
+  }
+}
+
+exports.main = async (event = {}) => {
   const { OPENID } = cloud.getWXContext()
   if (OPENID !== ADMIN_OPENID) {
     return { ok: false, message: '无权限访问' }
+  }
+
+  if (event.action === 'listAttempts') {
+    const page = await listAttempts(event.offset, event.limit)
+    return { ok: true, ...page }
   }
 
   await markStaleSendingTasks()
@@ -200,6 +226,8 @@ exports.main = async () => {
     ok: true,
     stats,
     recentTasks: tasks.slice(0, RECENT_LIMIT).map(normalizeTask),
-    recentAttempts: attempts.slice(0, RECENT_ATTEMPT_LIMIT).map(normalizeAttempt)
+    recentAttempts: attempts.slice(0, RECENT_ATTEMPT_LIMIT).map(normalizeAttempt),
+    hasMoreAttempts: RECENT_ATTEMPT_LIMIT < attemptTotal,
+    nextAttemptOffset: Math.min(RECENT_ATTEMPT_LIMIT, attemptTotal)
   }
 }

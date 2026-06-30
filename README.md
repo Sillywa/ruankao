@@ -95,7 +95,7 @@ flowchart LR
 }
 ```
 
-- `status`：用户业务状态，取值为 `subscribed` 或 `cancelled`；
+- `status`：用户业务状态，`subscribed` 表示已订阅，`cancelled` 表示已取消，空字符串表示后台重置后的未订阅态；
 - `active`：微信一次性消息授权是否仍可用于发送；
 - 自动发送要求 `status === subscribed && active === true`。
 
@@ -133,6 +133,7 @@ flowchart LR
 - 显示“尚未订阅提醒”；
 - 显示“订阅成绩提醒”；
 - 用户同意微信授权后写入 `status: subscribed`、`active: true`；
+- 管理后台“一键重置”会把所有用户写回 `status: ''`、`active: true`，用户可重新授权订阅提醒；
 - 如果授权为 `reject` 或 `ban`，引导用户进入微信设置页。
 
 ### 已订阅且尚未发现成绩公告
